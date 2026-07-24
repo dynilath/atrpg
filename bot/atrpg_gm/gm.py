@@ -53,6 +53,10 @@ class ToolContext:
     send_fn: Callable[[str], Awaitable[None]] | None = None
     # 标记本轮是否已通过 reply 发过内容（用于判断兜底）
     replied: bool = False
+    # 本轮 reply 内容预览（供快照 meta 记录，控制台展示）
+    reply_preview: str = ""
+    # 本轮累计 token 用量（最后一次 LLM 调用的 usage）
+    last_usage: dict[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -126,12 +130,14 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 
 @tool(
     "reply",
-    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、场景描写、给玩家的提示/选项）。"
-    "这是把内容发到 QQ 群的唯一出口。可多次调用以分段发送。",
+    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、场景描写）。"
+    "这是把内容发到 QQ 群的唯一出口。**所有要给玩家看的文本必须放在 content 参数里**——"
+    "不要把演绎文本写在 assistant 消息正文（content 字段）然后调 reply 传空参数，"
+    "那会导致内容丢失。一轮只调一次 reply，把全部内容放进去。",
     {
         "type": "object",
         "properties": {
-            "content": {"type": "string", "description": "要发给玩家的文本内容"},
+            "content": {"type": "string", "description": "要发给玩家的完整文本（演绎/NPC台词/裁决），必填，不能为空"},
         },
         "required": ["content"],
     },
@@ -139,10 +145,13 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 async def reply(ctx: ToolContext, content: str) -> str:
     # 流式回复：reply 被调用时立即发群，不等工具循环结束。
     # 这样玩家快速看到演绎文本，落盘等后续工具调用在后台继续。
+    if not content or not content.strip():
+        return "错误：reply 的 content 不能为空。把要发给玩家的文本放进 content 参数。"
     if ctx.send_fn:
         for chunk in _split_chunks([content]):
             await ctx.send_fn(chunk)
     ctx.replied = True
+    ctx.reply_preview = content[:120]  # 记录预览供控制台展示
     return "已发送给玩家。"
 
 
@@ -902,23 +911,33 @@ async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreat
                 await matcher.send("⚠ 主持人暂时无法响应，请稍后再试。")
             break
 
-        # 输出 token 用量与缓存命中
+        # 输出 token 用量与缓存命中（累加本轮所有 LLM 调用）
         u = assistant.usage
         if u:
+            ctx.last_usage = {
+                "prompt_tokens": ctx.last_usage.get("prompt_tokens", 0) + u.get("prompt_tokens", 0),
+                "completion_tokens": ctx.last_usage.get("completion_tokens", 0) + u.get("completion_tokens", 0),
+                "cached_tokens": ctx.last_usage.get("cached_tokens", 0) + u.get("cached_tokens", 0),
+            }
             logger.info(
-                f"LLM 用量: prompt={u.get('prompt_tokens', 0)} "
-                f"cached={u.get('cached_tokens', 0)}/{u.get('prompt_tokens', 0)} "
-                f"completion={u.get('completion_tokens', 0)}"
+                f"LLM 用量(本轮累计): prompt={ctx.last_usage['prompt_tokens']} "
+                f"cached={ctx.last_usage['cached_tokens']}/{ctx.last_usage['prompt_tokens']} "
+                f"completion={ctx.last_usage['completion_tokens']}"
             )
 
         # 把助手这步加入消息历史
         messages.append(llm.assistant_to_message(assistant))
 
         if not assistant.has_tool_calls:
-            # 模型收尾（未调工具）。若有文本残留且本轮还没 reply 过，作为回复发出。
-            if assistant.content.strip() and not ctx.replied:
-                await _send(assistant.content)
-                ctx.replied = True
+            # 模型收尾（未调工具）。
+            if assistant.content.strip():
+                if not ctx.replied:
+                    # 本轮还没 reply 过，把收尾文本作为回复发出
+                    await _send(assistant.content)
+                    ctx.replied = True
+                else:
+                    # 已 reply 过却还有残留文本——LLM 违规，丢弃避免重复消息
+                    logger.warning(f"LLM reply 后又生成残留文本，已丢弃：{assistant.content[:80]!r}")
             break
 
         # 执行工具调用（reply 会立即发群，落盘工具在后台继续）
@@ -932,8 +951,22 @@ async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreat
             await matcher.send("（主持人处理超时，本轮已中断。请重试。）")
         logger.warning("工具调用循环达到上限，强制收尾")
 
-    # 保存对话历史（含本轮所有新增消息）
-    s.save_history(session_key, messages)
+    # 保存对话历史（含本轮所有新增消息 + 元信息快照）
+    # meta 供控制台展示与回滚定位
+    from datetime import datetime as _dt
+    # 从 sender_frame 提取发送人名（<turn sender="xxx" ...>）
+    sender_name = ""
+    _sf = sender_frame
+    if 'sender="' in _sf:
+        sender_name = _sf.split('sender="', 1)[1].split('"', 1)[0]
+    meta = {
+        "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "sender": sender_name,
+        "player_text": text[:120],
+        "reply_preview": ctx.reply_preview,
+        "usage": ctx.last_usage,
+    }
+    s.save_history(session_key, messages, meta=meta)
 
     # 兜底：如果整个循环没产生任何回复
     if not ctx.replied:

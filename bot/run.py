@@ -65,7 +65,7 @@ def _flatten_config(cfg: dict[str, Any]) -> dict[str, Any]:
         )
 
     kwargs: dict[str, Any] = {
-        "driver": nb.get("driver", "~httpx+~websockets"),
+        "driver": nb.get("driver", "~fastapi+~httpx+~websockets"),
         "host": nb.get("host", "127.0.0.1"),
         "port": nb.get("port", 8080),
         "log_level": nb.get("log_level", "INFO"),
@@ -98,6 +98,11 @@ def main() -> None:
     driver = nonebot.get_driver()
     driver.register_adapter(QQAdapter)
     nonebot.load_from_toml("pyproject.toml")
+
+    # 挂载网页控制台（在 FastAPI driver 的 server_app 上加路由）
+    from atrpg_gm.console import setup_console
+    setup_console()
+
     nonebot.run()
 
 

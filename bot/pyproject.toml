@@ -5,7 +5,7 @@ description = "ATRPG QQ 群 AI 主持人验证程序"
 # >=3.11：依赖内置 tomllib 读取 config.toml（3.11 起内置）
 requires-python = ">=3.11"
 dependencies = [
-    "nonebot2>=2.5",
+    "nonebot2[fastapi]>=2.5",
     "nonebot-adapter-qq>=1.7",
     "openai>=1.0",
     "pyyaml>=6.0",

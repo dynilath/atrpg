@@ -12,12 +12,44 @@ Set-Location $PSScriptRoot
 $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 
 if (-not (Test-Path $python)) {
-    Write-Host "[错误] 找不到项目 venv: $python" -ForegroundColor Red
-    Write-Host '请先创建并装依赖：' -ForegroundColor Yellow
-    Write-Host '  "C:\Users\admin\.workbuddy\binaries\python\versions\3.13.12\python.exe" -m venv .venv'
-    Write-Host '  .venv\Scripts\python.exe -m pip install nonebot2 nonebot-adapter-qq pyyaml openai httpx'
-    Read-Host '按回车关闭'
-    exit 1
+    Write-Host '[ATRPG Bot] 未找到 .venv，自动创建中...' -ForegroundColor Yellow
+
+    # 找系统 Python：优先用已知路径，其次 python3 / python
+    $sysPython = $null
+    $candidates = @(
+        'C:\Users\admin\.workbuddy\binaries\python\versions\3.13.12\python.exe'
+    )
+    foreach ($c in $candidates) {
+        if (Test-Path $c) { $sysPython = $c; break }
+    }
+    if (-not $sysPython) {
+        $sysPython = (Get-Command python3 -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $sysPython) {
+        $sysPython = (Get-Command python -ErrorAction SilentlyContinue).Source
+    }
+    if (-not $sysPython) {
+        Write-Host "[错误] 找不到系统 Python，无法自动创建 venv" -ForegroundColor Red
+        Read-Host '按回车关闭'
+        exit 1
+    }
+
+    Write-Host "  使用: $sysPython"
+    & $sysPython -m venv .venv
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[错误] venv 创建失败" -ForegroundColor Red
+        Read-Host '按回车关闭'
+        exit 1
+    }
+
+    Write-Host '  安装依赖...'
+    & $python -m pip install -e . --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[错误] 依赖安装失败" -ForegroundColor Red
+        Read-Host '按回车关闭'
+        exit 1
+    }
+    Write-Host '[ATRPG Bot] venv 创建完成' -ForegroundColor Green
 }
 
 Write-Host '[ATRPG Bot] 使用项目 venv 启动...' -ForegroundColor Cyan

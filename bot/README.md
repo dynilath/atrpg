@@ -12,15 +12,16 @@ QQ 群 AI 主持人验证程序。吃一个符合 `agent.md` 规划的 TRPG 上�
 
 ```
 bot/
-├── .env                      # 配置（QQ appID/appSecret、LLM key、上下文目录路径）
-├── pyproject.toml
-├── bot/__init__.py           # 启动入口
+├── config.toml               # 配置（QQ appID/appSecret、LLM key、上下文目录路径；含密钥，gitignore）
+├── pyproject.toml            # 项目元数据 + [tool.nonebot] 插件声明
+├── run.py                    # 启动入口（读 config.toml → nonebot.init 注入）
+├── config_setup.py           # 交互式配置向导（读写 config.toml）
 └── atrpg_gm/
     ├── __init__.py
     ├── store.py              # TRPG 上下文目录加载与持久化
     ├── llm.py               # OpenAI 兼容 LLM 客户端
     ├── arc.py                # 弧光分级规划与追踪
-    ├── gm.py                # 主持人核心调度（消息分流/角色创建/行动处理）
+    ├── gm.py                # 主持人核心调度（工具调用驱动：角色创建/行动裁决/落盘）
     └── gm_runtime.md         # 运行时系统提示词
 └── example-game/            # 示例 TRPG 上下文目录（含 1 条主要弧光 + 场景/地点）
     └── data/
@@ -37,22 +38,22 @@ venv 建在项目内（自包含，迁移/删除方便）：
 
 ```bash
 cd bot
-# 用系统 Python 创建项目内 venv
+# 用系统 Python 创建项目内 venv（需 Python >=3.11，依赖内置 tomllib 读 config.toml）
 "C:\Users\admin\.workbuddy\binaries\python\versions\3.13.12\python.exe" -m venv .venv
 # 装依赖到项目 venv
-.venv\Scripts\python.exe -m pip install nonebot2 nonebot-adapter-qq pyyaml openai httpx
+.venv\Scripts\python.exe -m pip install nonebot2 nonebot-adapter-qq pyyaml openai httpx tomli-w
 ```
 
-之后双击 `run.bat` 即可（自动用项目内 venv 的 Python，无需手动激活）。
+之后运行 `pwsh -File run.ps1` 即可（自动用项目内 venv 的 Python，无需手动激活）。
 
 ## 配置
 
-**首次运行无需手动改 .env** —— 启动时若检测到配置缺失（appID/AppSecret/LLM key/上下文目录等），会自动进入交互式向导：
+**首次运行无需手动改配置** —— 启动时若检测到 config.toml 缺失或关键字段为占位符（appID/AppSecret/LLM key/上下文目录等），会自动进入交互式向导：
 
 ```
 $ pwsh -File run.ps1
 
-⚠ 检测到未配置项: QQ_BOTS, ATRPG_LLM_API_KEY, ATRPG_TARGET_GROUP
+⚠ 未找到 config.toml，进入首次配置向导。
 
 ==================================================
   ATRPG Bot 首次配置向导
@@ -83,35 +84,43 @@ AppSecret [首次生成后只能看一次，务必保存；同时填入 token �
 > ********
 ```
 
-向导完成后自动写入 `.env` 并继续启动。
+向导完成后自动写入 `config.toml` 并继续启动。
 
-### 手动改 .env（可选）
+> **关于 toml 配置**：NoneBot 2.5 原生不支持从 toml 读配置值（只支持 `.env` / 环境变量 / `init(**kwargs)`）。本程序在 `run.py` 里自读 `config.toml`，拍平后通过 `nonebot.init(**kwargs)` 注入——init kwargs 优先级最高，可靠覆盖。这样配置文件干净可读（toml 原生多行/内联表），不用 dotenv 那套转义 JSON。
 
-跳过向导直接编辑 `.env`：
+### 手动改 config.toml（可选）
 
-```ini
-# QQ 官方 Bot（在 https://q.qq.com 注册机器人，取 appID/appSecret/token）
-QQ_BOTS='
-[
-  {
-    "id": "你的APPID",
-    "token": "你的TOKEN",
-    "secret": "你的SECRET",
-    "intent": { "c2c_group_at_messages": true },
-    "use_websocket": true
-  }
-]
-'
+跳过向导直接编辑 `config.toml`：
+
+```toml
+# NoneBot 运行参数
+[nonebot]
+driver = "~httpx+~websockets"
+host = "127.0.0.1"
+port = 8080
+log_level = "INFO"
+qq_is_sandbox = false
+
+# QQ 官方 Bot（在 https://q.qq.com 注册机器人，取 appID/appSecret）
+# adapter-qq 约定：token 与 secret 都填 AppSecret
+[[qq_bots]]
+id = "你的APPID"
+token = "你的AppSecret"
+secret = "你的AppSecret"
+use_websocket = true
+  [qq_bots.intent]
+  c2c_group_at_messages = true
 
 # ATRPG 运行时
-ATRPG_GAME_DIR=./example-game       # 指向一个符合 agent.md 的 TRPG 上下文目录
-ATRPG_TARGET_GROUP=群openid          # 只响应这个群（留空则响应所有）
+[atrpg]
+game_dir = "./example-game"        # 指向一个符合 agent.md 的 TRPG 上下文目录
+target_group = ""                  # 只响应这个群（留空则响应所有）
 
 # LLM（OpenAI 兼容协议）
-ATRPG_LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-ATRPG_LLM_API_KEY=your-key
-ATRPG_LLM_MODEL=glm-4-plus
-ATRPG_LLM_UTILITY_MODEL=glm-4-flash
+llm_base_url = "https://open.bigmodel.cn/api/paas/v4"
+llm_api_key = "your-key"
+llm_model = "glm-4-plus"
+llm_utility_model = "glm-4-flash"
 ```
 
 ## 运行
@@ -123,17 +132,17 @@ pwsh -File run.ps1            # 推荐：PowerShell 脚本，自动用项目 ven
 # 或直接：.venv\Scripts\python.exe run.py
 ```
 
-启动后会校验 `ATRPG_GAME_DIR`：至少 1 条主要弧光 + 若干场景/地点，否则拒绝开团。
+启动后会校验 `game_dir`：至少 1 条主要弧光 + 若干场景/地点，否则拒绝开团。
 
 ### 获取群 openid（重要，无法预先查）
 
 QQ 官方群的 openid **不能预先查到**，只能从 bot 收到的消息事件里提取。流程：
 
-1. `.env` 里 `ATRPG_TARGET_GROUP=` 留空（响应所有群）
+1. `config.toml` 里 `[atrpg] target_group = ""` 留空（响应所有群）
 2. 在 QQ 开放平台「沙箱配置」把测试群加进去（你须是群主/管理员，群≤20人）
 3. 手机 QQ 把机器人添加进群，在群里 @机器人 发一条消息
 4. bot 日志会打印 `group_openid=xxxxx`（32 位十六进制）
-5. 把 openid 抄进 `.env` 的 `ATRPG_TARGET_GROUP`，重启，此后只响应这个群
+5. 把 openid 抄进 `config.toml` 的 `[atrpg] target_group`，重启，此后只响应这个群
 
 或用 `pwsh -File run.ps1 -Setup` 重跑向导填回来。
 

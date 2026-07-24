@@ -103,20 +103,25 @@ class Store:
         (self.root / "data").mkdir(exist_ok=True)
         for sub in self.SUBDIRS:
             (self.root / "data" / sub).mkdir(exist_ok=True)
+        # .atrpg/ 放运行时缓存（LLM 对话历史等），不是数据源
+        (self.root / ".atrpg" / "history").mkdir(parents=True, exist_ok=True)
 
     def _validate(self) -> None:
-        """启动校验：至少 1 条主要弧光 + 至少 1 个场景 + 至少 1 个地点。"""
-        arcs = self.list_docs("story-arcs")
-        major = [a for a in arcs if a["meta"].get("级别") == "主要"]
-        if not major:
+        """启动校验：必须有「世界基础材料」。
+
+        接受两种形式之一：
+        - data/world-book.md（经 build_world_book.py 总结的常驻世界书，推荐）
+        - 根目录下的 .txt/.md 原始材料（pdf_extract 等，未预处理时回退）
+
+        弧光/场景/地点都不强制——没有预置主要弧光也能开团，主持人可现场即兴规划
+        单局/局部弧光；场景/地点按需由 LLM 生成。但世界基础材料是 LLM 主持人的
+        世界知识来源，缺了它无法基于规则书带团。
+        """
+        if not (self.root / "data" / "world-book.md").exists() and not self.list_world_material():
             raise StoreError(
-                "目录缺少「主要」弧光（data/story-arcs/ 中无 级别: 主要 的文件）。"
-                "请先由备团用户预置主要故事弧光。"
+                "目录缺少「世界基础材料」：需 data/world-book.md（推荐，用 build_world_book.py 生成）"
+                "或根目录下至少 1 个 .txt/.md 原始材料文件。"
             )
-        if not self.list_docs("scenes"):
-            raise StoreError("目录缺少场景（data/scenes/ 为空）。")
-        if not self.list_docs("locations"):
-            raise StoreError("目录缺少地点（data/locations/ 为空）。")
 
     # ---------- 通用读写 ----------
     def _path(self, kind: str, slug: str) -> Path:
@@ -157,6 +162,142 @@ class Store:
         return out
 
     # ---------- 便捷业务接口 ----------
+    def list_world_material(self) -> list[Path]:
+        """列出根目录下的世界基础材料文件（.txt/.md，规则书/世界设定）。
+
+        排除 agent.md / project.md / README 这类项目说明文件。
+        这些文件是 LLM 主持人的世界知识来源。
+        """
+        excluded = {"agent.md", "project.md", "readme.md", "license"}
+        out = []
+        for p in sorted(self.root.glob("*.txt")):
+            out.append(p)
+        for p in sorted(self.root.glob("*.md")):
+            if p.name.lower() not in excluded:
+                out.append(p)
+        return out
+
+    def read_world_material(self, max_chars: int = 12000) -> str:
+        """读取并拼接世界基础材料，喂给 LLM 作世界观上下文。
+
+        多个文件按文件名排序，预算均匀分配给每个文件（避免第一个大文件吃光额度）。
+        每个文件截取前 (max_chars // 文件数) 字符，整体不超过 max_chars。
+        """
+        files = self.list_world_material()
+        if not files:
+            return ""
+        per_file = max_chars // len(files)
+        parts: list[str] = []
+        for p in files:
+            try:
+                text = p.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if len(text) > per_file:
+                parts.append(f"=== {p.name}（截断，仅前 {per_file} 字）===\n{text[:per_file]}")
+            else:
+                parts.append(f"=== {p.name} ===\n{text}")
+        return "\n\n".join(parts)
+
+    def read_world_book(self) -> str:
+        """读取世界书作为 LLM 主持人的常驻世界观知识。
+
+        优先读 data/world-book.md（经 build_world_book.py 总结，精炼推荐）；
+        不存在则回退 read_world_material()（原始 pdf_extract，兼容未预处理目录）。
+        """
+        wb = self.root / "data" / "world-book.md"
+        if wb.exists():
+            _, body = _parse_doc(wb.read_text(encoding="utf-8"))
+            return body
+        return self.read_world_material()
+
+    def read_style_guide(self) -> str:
+        """读取文风参考（data/style-guide.md）。不存在返回空串。"""
+        sg = self.root / "data" / "style-guide.md"
+        if sg.exists():
+            _, body = _parse_doc(sg.read_text(encoding="utf-8"))
+            return body
+        return ""
+
+    # ---------- 运行时缓存（.atrpg/，纯 LLM 对话历史，非数据源）----------
+    def load_history(self, session_key: str) -> list[dict[str, Any]]:
+        """加载某会话的 LLM 对话历史。不存在返回空列表。
+
+        加载时清洗孤立 tool 消息：若 tool result 前面没有对应的
+        assistant(tool_calls)，则丢弃该 tool 消息（防止 DeepSeek 400）。
+        """
+        p = self.root / ".atrpg" / "history" / f"{session_key}.json"
+        if not p.exists():
+            return []
+        import json
+        try:
+            msgs = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        # 清洗：保留 assistant(tool_calls) → tool(result) 的完整配对
+        cleaned: list[dict[str, Any]] = []
+        pending_call_ids: set[str] = set()
+        for m in msgs:
+            role = m.get("role", "")
+            if role == "assistant" and m.get("tool_calls"):
+                cleaned.append(m)
+                pending_call_ids = {tc.get("id", "") for tc in m["tool_calls"]}
+            elif role == "tool":
+                tcid = m.get("tool_call_id", "")
+                if tcid in pending_call_ids:
+                    cleaned.append(m)
+                    pending_call_ids.discard(tcid)
+                # else: 孤立 tool 消息，丢弃
+            else:
+                # 遇到非 tool 序列消息，若有未完成的 tool_calls 也清掉
+                pending_call_ids.clear()
+                cleaned.append(m)
+        return cleaned
+
+    def save_history(self, session_key: str, messages: list[dict[str, Any]]) -> None:
+        """保存对话历史。超长时截断（保留首条 system + 最近若干条）。
+
+        截断时必须保证 tool_calls/tool 消息配对完整：不能从 tool result 中间截断，
+        否则 DeepSeek/OpenAI 会因孤立 tool 消息报 400。
+        从目标截断点往前回退，直到落在安全边界（user 消息，或无 tool_calls 的 assistant 消息）。
+        """
+        MAX = 40
+        KEEP_RECENT = 20
+        if len(messages) > MAX:
+            head = messages[:1]
+            cut = len(messages) - KEEP_RECENT
+            # 从截断点往前回退，找到安全边界（不在 tool_calls→tool 序列中间）
+            while cut < len(messages):
+                msg = messages[cut]
+                role = msg.get("role", "")
+                # tool 消息必须跟在 assistant(tool_calls) 后；不能从这里开始
+                if role == "tool":
+                    cut += 1
+                    continue
+                # assistant 带 tool_calls 的消息后面必须跟 tool result；不能从这里截断
+                if role == "assistant" and msg.get("tool_calls"):
+                    cut += 1
+                    continue
+                break
+            tail = messages[cut:]
+            messages = head + [{"role": "system", "content": "（较早的对话已省略）"}] + tail
+        import json
+        p = self.root / ".atrpg" / "history" / f"{session_key}.json"
+        p.write_text(json.dumps(messages, ensure_ascii=False), encoding="utf-8")
+
+    # ---------- 位置追踪 ----------
+    def chars_in_scene(self, scene_slug: str) -> list[str]:
+        """查某场景有哪些角色（读场景 meta「在场者」字段，反向查询）。"""
+        d = self.read("scenes", scene_slug)
+        if d is None:
+            return []
+        return d[0].get("在场者", []) or []
+
+    def all_char_locations(self, group_id: str) -> dict[str, str]:
+        """列出某会话所有角色的当前位置（角色 slug → 场景 slug）。"""
+        s = self.get_session(group_id)
+        return dict(s.char_scene_map)
+
     def player_binding(self, user_id: str) -> str | None:
         """QQ → 角色 slug。"""
         d = self.read("players", str(user_id))

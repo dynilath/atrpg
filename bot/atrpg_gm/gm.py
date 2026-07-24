@@ -13,14 +13,13 @@
 from __future__ import annotations
 
 import json
-import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from nonebot import get_driver, logger, on_message
-from nonebot.adapters.qq import Bot, GroupAtMessageCreateEvent
+from nonebot.adapters.qq import Bot, C2CMessageCreateEvent, GroupAtMessageCreateEvent
 from nonebot.matcher import Matcher
 from nonebot.rule import is_type
 
@@ -40,7 +39,8 @@ MAX_TOOL_ROUNDS = 6
 class ToolContext:
     """单次消息处理内的可变状态与外部依赖。
 
-    每个 @bot 消息新建一个。工具实现通过它访问 store / 群信息 / 草案。
+    每个 @bot 消息新建一个。工具实现通过它访问 store / 群信息 / 发送回调。
+    角色卡草案不再存内存——直接落盘到 data/characters/（状态:待确认），跨消息持久化。
     """
 
     store: store.Store
@@ -48,10 +48,11 @@ class ToolContext:
     group_id: str
     # 玩家本轮发送的原始文本
     raw_text: str
-    # 草案暂存：draft_token → 草案 dict（draft_character 生成，finalize_character 消费）
-    drafts: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # 收集本轮要发群的回复文本（reply 工具写入，handler 末尾分块发送）
-    replies: list[str] = field(default_factory=list)
+    # 发送回调：reply 工具调用时立即发群（流式回复），不等循环结束。
+    # 由 handler 注入（包装 matcher.send）。
+    send_fn: Callable[[str], Awaitable[None]] | None = None
+    # 标记本轮是否已通过 reply 发过内容（用于判断兜底）
+    replied: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +137,13 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
     },
 )
 async def reply(ctx: ToolContext, content: str) -> str:
-    ctx.replies.append(content)
-    return "已加入待发送回复队列。"
+    # 流式回复：reply 被调用时立即发群，不等工具循环结束。
+    # 这样玩家快速看到演绎文本，落盘等后续工具调用在后台继续。
+    if ctx.send_fn:
+        for chunk in _split_chunks([content]):
+            await ctx.send_fn(chunk)
+    ctx.replied = True
+    return "已发送给玩家。"
 
 
 # --- 角色与场景工具 ---------------------------------------------------------
@@ -145,9 +151,9 @@ async def reply(ctx: ToolContext, content: str) -> str:
 @tool(
     "draft_character",
     "当玩家给出概括叙述（如「我是个流浪剑客，在找失散的妹妹」）且尚未绑定角色时，"
-    "生成完整角色卡草案。草案先发给玩家确认/修改，确认后才正式落盘。"
-    "本工具不落盘，只返回草案。请基于玩家叙述补全外貌/性格/能力/背景，"
-    "动机尽量挂接到已有主要弧光。",
+    "生成完整角色卡草案并落盘到 data/characters/<slug>.md（状态标「待确认」）。"
+    "草案含全量信息（含剧情钩子，落盘但仅主持人可见）；发给玩家的展示卡只含玩家可见字段。"
+    "请基于玩家叙述补全外貌/性格/能力/背景，动机尽量挂接到已有主要弧光。",
     {
         "type": "object",
         "properties": {
@@ -157,7 +163,7 @@ async def reply(ctx: ToolContext, content: str) -> str:
             "personality": {"type": "string", "description": "性格关键词与简述"},
             "background": {"type": "string", "description": "出身、经历、为何在此"},
             "skills": {"type": "string", "description": "核心技能与熟练度、属性倾向"},
-            "hooks": {"type": "string", "description": "剧情连接：卷入哪条弧光、当前目标"},
+            "hooks": {"type": "string", "description": "剧情连接：卷入哪条弧光、当前目标（主持人内部，不展示给玩家）"},
         },
         "required": ["name", "identity", "background"],
     },
@@ -186,72 +192,82 @@ async def draft_character(
         "hooks": hooks,
         "slug": store.slugify(name),
     }
-    token = secrets.token_hex(4)
-    ctx.drafts[token] = draft
+    slug = draft["slug"]
 
-    # 把草案展示给玩家，请求确认
-    card = _render_draft_card(draft)
-    ctx.replies.append(card)
+    # 草案即落盘到 characters/（状态「待确认」，含全量信息含 hooks）
+    char_body = _render_character_body(draft)
+    ctx.store.write(
+        "characters",
+        slug,
+        {
+            "姓名": name,
+            "类型": "玩家角色",
+            "身份": identity,
+            "状态": "待确认",
+            "slug": slug,
+            "owner_openid": ctx.member_openid,
+        },
+        char_body,
+    )
+
+    # 发给玩家的是可见摘要卡（不含 hooks）——立即发送
+    card = _render_player_card(draft)
+    if ctx.send_fn:
+        await ctx.send_fn(card)
     return (
-        f"已生成角色卡草案（draft_token={token}），已展示给玩家。"
-        "等待玩家回复确认（如「确认」「就这样」）后，调用 finalize_character 落盘。"
+        f"角色卡草案已落盘到 data/characters/{slug}.md（状态:待确认），已展示玩家可见摘要。"
+        "等待玩家回复确认（如「确认」「就这样」）后，调用 finalize_character 转为正式。"
     )
 
 
 @tool(
     "finalize_character",
-    "玩家确认角色卡草案后，正式落盘：创建角色档案、绑定 QQ↔角色、"
+    "玩家确认角色卡草案后，把待确认角色转为正式：改状态、绑定 QQ↔角色、"
     "把角色放入指定场景的在场者并记录场景归属。必须先用 draft_character 生成草案。",
     {
         "type": "object",
         "properties": {
-            "draft_token": {"type": "string", "description": "draft_character 返回的 token"},
+            "char_slug": {
+                "type": "string",
+                "description": "待确认角色的 slug（draft_character 落盘时用的 slug）",
+            },
             "scene_slug": {
                 "type": "string",
                 "description": "初始场景 slug（由你决定，不由玩家选）",
             },
         },
-        "required": ["draft_token", "scene_slug"],
+        "required": ["char_slug", "scene_slug"],
     },
 )
-async def finalize_character(ctx: ToolContext, draft_token: str, scene_slug: str) -> str:
-    draft = ctx.drafts.get(draft_token)
-    if draft is None:
-        return f"错误：draft_token '{draft_token}' 无效或已过期。请重新 draft_character。"
+async def finalize_character(ctx: ToolContext, char_slug: str, scene_slug: str) -> str:
+    d = ctx.store.read("characters", char_slug)
+    if d is None:
+        return f"错误：角色 '{char_slug}' 不存在。请先用 draft_character 生成草案。"
+    meta, body = d
+    if meta.get("状态") != "待确认":
+        return f"错误：角色 '{char_slug}' 状态为「{meta.get('状态')}」，不是待确认草案。"
 
     # 校验场景存在
     scene = ctx.store.read("scenes", scene_slug)
     if scene is None:
         return f"错误：场景 '{scene_slug}' 不存在。请用 query_memory 查可用场景或 create_scene 新建。"
 
-    slug = draft["slug"]
-    meta, body = scene
-    # 角色档案
-    char_body = _render_character_body(draft)
-    ctx.store.write(
-        "characters",
-        slug,
-        {
-            "姓名": draft["name"],
-            "类型": "玩家角色",
-            "身份": draft["identity"],
-            "slug": slug,
-        },
-        char_body,
-    )
+    # 转为正式：改状态
+    meta["状态"] = "正式"
+    ctx.store.write("characters", char_slug, meta, body)
+
     # 绑定 QQ↔角色
-    ctx.store.bind_player(ctx.member_openid, slug, draft["name"])
+    ctx.store.bind_player(ctx.member_openid, char_slug, meta.get("姓名", char_slug))
     # 场景归属 + 在场者追加
-    ctx.store.set_char_scene(ctx.group_id, slug, scene_slug)
-    _append_attendee(ctx.store, scene_slug, slug)
-    # 通知系统：维护轮次提示
-    ctx.replies.append(
-        f"✓ 角色档案已落盘：data/characters/{slug}.md\n"
-        f"✓ 已绑定 QQ↔角色，初始场景：{meta.get('名称', scene_slug)}"
-    )
-    # 草案消费后清除
-    ctx.drafts.pop(draft_token, None)
-    return f"角色 {draft['name']}（{slug}）已正式落盘并绑定，初始场景 {scene_slug}。"
+    ctx.store.set_char_scene(ctx.group_id, char_slug, scene_slug)
+    scene_meta, _ = scene
+    _append_attendee(ctx.store, scene_slug, char_slug)
+    if ctx.send_fn:
+        await ctx.send_fn(
+            f"✓ 角色已转正式并绑定：data/characters/{char_slug}.md\n"
+            f"✓ 初始场景：{scene_meta.get('名称', scene_slug)}"
+        )
+    return f"角色 {meta.get('姓名', char_slug)}（{char_slug}）已正式落盘并绑定，初始场景 {scene_slug}。"
 
 
 @tool(
@@ -558,7 +574,7 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "") -> str:
         if d is None:
             return f"未找到 {kind}/{slug}。"
         meta, body = d
-        return f"## {kind}/{slug}\n\n元信息：{json.dumps(meta, ensure_ascii=False)}\n\n{body}"
+        return f"## {kind}/{slug}\n\n元信息：{json.dumps(meta, ensure_ascii=False, default=str)}\n\n{body}"
     docs = ctx.store.list_docs(kind)
     if not docs:
         return f"{kind} 下暂无档案。"
@@ -570,13 +586,79 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "") -> str:
     return "\n".join(lines)
 
 
+@tool(
+    "query_locations",
+    "追踪角色位置与场景在场者。回答「某角色在哪」「某场景有谁」「所有角色位置」等问题。"
+    "裁决跨场景移动、判断角色能否互动时也应先查询。",
+    {
+        "type": "object",
+        "properties": {
+            "query_type": {
+                "type": "string",
+                "enum": ["where_is", "who_in", "all"],
+                "description": "where_is=查某角色在哪；who_in=查某场景有哪些角色；all=列出所有角色位置",
+            },
+            "char_slug": {"type": "string", "description": "where_is 时必填：要查的角色 slug"},
+            "scene_slug": {"type": "string", "description": "who_in 时必填：要查的场景 slug"},
+        },
+        "required": ["query_type"],
+    },
+)
+async def query_locations(
+    ctx: ToolContext,
+    query_type: str,
+    char_slug: str = "",
+    scene_slug: str = "",
+) -> str:
+    if query_type == "where_is":
+        if not char_slug:
+            return "错误：where_is 需提供 char_slug。"
+        loc = ctx.store.char_scene(ctx.group_id, char_slug)
+        if not loc:
+            return f"角色 {char_slug} 当前无场景归属记录。"
+        d = ctx.store.read("scenes", loc)
+        if d is None:
+            return f"角色 {char_slug} 在场景 {loc}，但场景档案不存在。"
+        meta, body = d
+        attendees = ctx.store.chars_in_scene(loc)
+        others = [a for a in attendees if a != char_slug]
+        return (
+            f"角色 {char_slug} 当前在场景「{meta.get('名称', loc)}」（{loc}）。\n"
+            f"场景描写：{body[:300]}\n"
+            f"同场角色：{('、'.join(others)) if others else '无'}"
+        )
+    if query_type == "who_in":
+        if not scene_slug:
+            return "错误：who_in 需提供 scene_slug。"
+        attendees = ctx.store.chars_in_scene(scene_slug)
+        d = ctx.store.read("scenes", scene_slug)
+        name = d[0].get("名称", scene_slug) if d else scene_slug
+        if not attendees:
+            return f"场景「{name}」（{scene_slug}）当前无角色在场。"
+        return f"场景「{name}」（{scene_slug}）在场角色：{ '、'.join(attendees) }"
+    if query_type == "all":
+        locs = ctx.store.all_char_locations(ctx.group_id)
+        if not locs:
+            return "当前无角色位置记录。"
+        lines = ["所有角色位置："]
+        for c, s in locs.items():
+            d = ctx.store.read("characters", c)
+            cname = d[0].get("姓名", c) if d else c
+            sd = ctx.store.read("scenes", s)
+            sname = sd[0].get("名称", s) if sd else s
+            lines.append(f"- {cname}（{c}）→ {sname}（{s}）")
+        return "\n".join(lines)
+    return f"错误：未知 query_type '{query_type}'。"
+
+
 # ===========================================================================
 # 辅助渲染
 # ===========================================================================
 
-def _render_draft_card(draft: dict[str, Any]) -> str:
+def _render_player_card(draft: dict[str, Any]) -> str:
+    """渲染玩家可见的角色卡摘要（不含 hooks/秘密等主持人内部信息）。"""
     lines = [
-        "📝 角色卡草案（请回复「确认」或提出修改）：",
+        "📝 角色卡（请回复「确认」接受，或提出修改）：",
         "",
         f"姓名：{draft['name']}",
         f"身份：{draft['identity']}",
@@ -588,8 +670,6 @@ def _render_draft_card(draft: dict[str, Any]) -> str:
     lines.append(f"背景：{draft['background']}")
     if draft.get("skills"):
         lines.append(f"能力：{draft['skills']}")
-    if draft.get("hooks"):
-        lines.append(f"剧情连接：{draft['hooks']}")
     return "\n".join(lines)
 
 
@@ -651,48 +731,62 @@ def _load_runtime_prompt() -> str:
     return p.read_text(encoding="utf-8")
 
 
-def _load_context_text(s: store.Store, group_id: str, member_openid: str) -> str:
-    """构造喂给 LLM 的当前局势文本。"""
-    parts: list[str] = []
+def _load_system_prefix(s: store.Store) -> str:
+    """构造稳定 system 前缀：运行时提示词 + 世界书 + 文风参考。
+
+    这几部分每轮不变，作为消息列表首条，让 DeepSeek 等提供商的前缀缓存命中。
+    """
+    runtime = _load_runtime_prompt()
+    parts = [runtime]
+    world = s.read_world_book()
+    if world:
+        parts.append(f"---\n\n# 世界书（常驻世界观知识，你的设定依据）\n\n{world}")
+    style = s.read_style_guide()
+    if style:
+        parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与场景描写时模仿此风格）\n\n{style}")
+    return "\n\n".join(parts)
+
+
+def _build_sender_frame(s: store.Store, group_id: str, member_openid: str) -> str:
+    """构造发送人框架：最小必要信息（谁在说话、关联角色、绑定状态）。
+
+    精简设计——不塞场景描写/弧光详情，那些由 LLM 用 query_locations/query_memory 按需查。
+    这样 user 消息短且稳定，历史续接干净，前缀缓存效率高。
+    """
     char_slug = s.player_binding(member_openid)
 
-    # 玩家绑定状态
     if char_slug:
-        parts.append(f"## 当前玩家\n该玩家已绑定角色：{char_slug}")
+        # 已绑定：带角色名 + 当前场景名（一行，不展开描写）
+        d = s.read("characters", char_slug)
+        char_name = d[0].get("姓名", char_slug) if d else char_slug
+        char_identity = d[0].get("身份", "") if d else ""
         scene_slug = s.char_scene(group_id, char_slug)
+        scene_name = ""
         if scene_slug:
-            parts.append(f"角色当前场景：{scene_slug}")
-            d = s.read("scenes", scene_slug)
-            if d:
-                meta, body = d
-                parts.append(f"### 场景 {meta.get('名称', scene_slug)}（{scene_slug}）")
-                parts.append(body[:1500])
-                attendees = meta.get("在场者", []) or []
-                if attendees:
-                    parts.append("在场者：" + "、".join(attendees))
+            sd = s.read("scenes", scene_slug)
+            scene_name = sd[0].get("名称", scene_slug) if sd else scene_slug
+        loc = f" | 当前场景: {scene_name}" if scene_name else ""
+        ident = f"（{char_identity}）" if char_identity else ""
+        return f'<turn sender="{char_name}" char="{char_slug}"{loc}>\n状态: 已绑定角色{ident}'
     else:
-        parts.append(
-            "## 当前玩家\n该玩家尚未绑定角色。若其消息是概括叙述（如「我是个流浪剑客」），走角色创建流程。"
-        )
-
-    # 进行中弧光
-    arcs_list = s.list_docs("story-arcs")
-    active = [a for a in arcs_list if a["meta"].get("状态") == "进行中"]
-    if active:
-        parts.append("\n## 进行中的故事弧光")
-        balance = arc.balance_report(s)
-        parts.append(
-            f"并行计数：主要 {balance.get('主要', 0)} / 单局 {balance.get('单局', 0)} "
-            f"/ 次要局部 {balance.get('次要局部', 0)}"
-        )
-        for a in active:
-            m = a["meta"]
-            parts.append(
-                f"- {a['slug']}：{m.get('名称', '')} | 级别:{m.get('级别', '')} "
-                f"| 阶段:{m.get('当前阶段', '')} | 规划者:{m.get('规划者', '')}"
+        # 未绑定：检查是否有待确认草案
+        pending = _find_pending_char(s, member_openid)
+        if pending:
+            pd = s.read("characters", pending)
+            pname = pd[0].get("姓名", pending) if pd else pending
+            return (
+                f'<turn sender="未绑定玩家" pending_char="{pending}">\n'
+                f'状态: 有待确认角色卡「{pname}」，若玩家确认则 finalize_character'
             )
+        return '<turn sender="未绑定玩家">\n状态: 尚未绑定角色，若为概括叙述则走角色创建'
 
-    return "\n".join(parts)
+
+def _find_pending_char(s: store.Store, member_openid: str) -> str | None:
+    """查找某玩家的待确认角色草案 slug（扫 characters/ 状态为待确认且 owner 匹配）。"""
+    for d in s.list_docs("characters"):
+        if d["meta"].get("状态") == "待确认" and d["meta"].get("owner_openid") == member_openid:
+            return d["slug"]
+    return None
 
 
 def get_store() -> store.Store:
@@ -705,17 +799,37 @@ def get_store() -> store.Store:
 # matcher 入口
 # ===========================================================================
 
-group_at = on_message(rule=is_type(GroupAtMessageCreateEvent), priority=10, block=True)
+# 同时监听群 @ 消息与 C2C 私聊消息。私聊是否真正处理由 c2c_test_mode 开关控制
+# （见 handler 内），开关关闭时私聊事件进入 handler 后被忽略，开销极小。
+group_at = on_message(
+    rule=is_type(GroupAtMessageCreateEvent, C2CMessageCreateEvent),
+    priority=10,
+    block=True,
+)
+
+
+def _resolve_session(event: GroupAtMessageCreateEvent | C2CMessageCreateEvent) -> tuple[str, str, bool]:
+    """从事件提取 (member_openid, session_key, is_c2c)。
+
+    群@消息：session_key = group_openid（按群隔离团会话）。
+    C2C 私聊：session_key = c2c_<user_openid>（虚拟群号，每个私聊用户独立会话）。
+    """
+    if isinstance(event, C2CMessageCreateEvent):
+        return event.author.user_openid, f"c2c_{event.author.user_openid}", True
+    return event.author.member_openid, event.group_openid, False
 
 
 @group_at.handle()
-async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreateEvent) -> None:
+async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreateEvent | C2CMessageCreateEvent) -> None:
+    member_openid, group_id, is_c2c = _resolve_session(event)
     text = event.get_plaintext().strip()
-    member_openid = event.author.member_openid
-    group_id = event.group_openid
 
     if not text:
-        return  # 空 @ 不处理
+        return  # 空消息不处理
+
+    # 私聊需 c2c_test_mode 开关开启才处理（用于验证；正式跑团应关）
+    if is_c2c and not getattr(get_driver().config, "atrpg_c2c_test_mode", False):
+        return
 
     try:
         s = get_store()
@@ -723,70 +837,97 @@ async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreat
         await matcher.send(f"⚠ 游戏目录未就绪：{e}")
         return
 
-    target_group = str(getattr(get_driver().config, "atrpg_target_group", "")).strip()
-    if target_group and group_id != target_group:
-        return  # 非目标群，忽略
+    # 仅群@消息做目标群过滤；私聊不过滤（测试模式下一对一验证）
+    if not is_c2c:
+        target_group = str(getattr(get_driver().config, "atrpg_target_group", "")).strip()
+        if target_group and group_id != target_group:
+            return  # 非目标群，忽略
 
-    logger.info(f"GM 处理: group={group_id} member={member_openid} text={text[:40]!r}")
+    logger.info(f"GM 处理: {'c2c' if is_c2c else 'group'}={group_id} member={member_openid} text={text[:40]!r}")
 
-    ctx = ToolContext(store=s, member_openid=member_openid, group_id=group_id, raw_text=text)
+    # 流式回复：reply 工具被调用时立即发群，不等循环结束。
+    # 包装 matcher.send 为 send_fn 注入 ToolContext。
+    async def _send(content: str) -> None:
+        for chunk in _split_chunks([content]):
+            await matcher.send(chunk)
 
-    # 构造初始消息
-    system_prompt = _load_runtime_prompt()
-    context_text = _load_context_text(s, group_id, member_openid)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {
-            "role": "user",
-            "content": (
-                f"# 当前局势\n{context_text}\n\n"
-                f"# 玩家本轮发言\n玩家({member_openid})：{text}\n\n"
-                f"请作为主持人处理。如需向玩家输出，用 reply 工具；"
-                f"如需落盘，用对应工具。处理完毕后以 reply 收尾。"
-            ),
-        },
-    ]
+    ctx = ToolContext(
+        store=s, member_openid=member_openid, group_id=group_id,
+        raw_text=text, send_fn=_send,
+    )
 
-    # 工具调用循环
+    # ---- 对话历史续接 ----
+    # 稳定前缀（gm_runtime + 世界书）作为首条 system；动态局势作为 user 消息每轮更新。
+    # 历史从 .atrpg/history/<session>.json 加载，本轮工具循环的消息追加进历史，结束后保存。
+    # 这样：1) 不每轮重传全部上下文（复用历史）；2) 稳定前缀不变，命中 DeepSeek 前缀缓存。
+    session_key = group_id
+    history = s.load_history(session_key)
+
+    # 每轮刷新稳定前缀（世界书可能更新）
+    system_prefix = _load_system_prefix(s)
+    # 发送人框架：精简（角色名/场景名一行），详情由 LLM 用 query_locations/query_memory 按需查
+    sender_frame = _build_sender_frame(s, group_id, member_openid)
+    turn_user = f"{sender_frame}\n\n{text}\n</turn>"
+
+    # 构造本轮 messages：新 system 前缀（首条）+ 历史（去掉旧 system）+ 本轮 user
+    # 显式过滤历史里的 system 消息（用新前缀替代），不依赖位置
+    history_body = [m for m in history if m.get("role") != "system"]
+    if history_body:
+        messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user}]
+    else:
+        # 首次对话：给 LLM 一句引导，告知可用工具查详情
+        messages = [
+            {"role": "system", "content": system_prefix},
+            {"role": "user", "content": turn_user + "\n\n（首次对话。如需了解当前场景/在场者/已有弧光，用 query_locations / query_memory 工具查询。处理完毕用 reply 收尾。）"},
+        ]
+
+    # 工具调用循环（流式：reply 工具被调用时立即发群）
     schemas = tool_schemas()
-    replied = False
     for _ in range(MAX_TOOL_ROUNDS):
         try:
             assistant = await llm.chat_with_tools(messages, schemas)
         except Exception as e:  # noqa: BLE001 — LLM 调用失败要给玩家兜底
             logger.opt(exception=e).error("LLM 调用失败")
-            if not ctx.replies:
+            if not ctx.replied:
                 await matcher.send("⚠ 主持人暂时无法响应，请稍后再试。")
             break
+
+        # 输出 token 用量与缓存命中
+        u = assistant.usage
+        if u:
+            logger.info(
+                f"LLM 用量: prompt={u.get('prompt_tokens', 0)} "
+                f"cached={u.get('cached_tokens', 0)}/{u.get('prompt_tokens', 0)} "
+                f"completion={u.get('completion_tokens', 0)}"
+            )
 
         # 把助手这步加入消息历史
         messages.append(llm.assistant_to_message(assistant))
 
         if not assistant.has_tool_calls:
-            # 模型收尾（未调工具）。若有文本残留也作为回复发出。
-            if assistant.content.strip():
-                ctx.replies.append(assistant.content)
+            # 模型收尾（未调工具）。若有文本残留且本轮还没 reply 过，作为回复发出。
+            if assistant.content.strip() and not ctx.replied:
+                await _send(assistant.content)
+                ctx.replied = True
             break
 
-        # 执行工具调用
+        # 执行工具调用（reply 会立即发群，落盘工具在后台继续）
         for call in assistant.tool_calls:
-            if call.name == "reply":
-                replied = True
             result = await dispatch(ctx, call)
             messages.append(llm.tool_result_message(call.id, result))
         # 循环上限兜底：给模型继续的机会
     else:
         # 触达 MAX_TOOL_ROUNDS 仍未收尾
-        if not ctx.replies:
-            ctx.replies.append("（主持人处理超时，本轮已中断。请重试。）")
+        if not ctx.replied:
+            await matcher.send("（主持人处理超时，本轮已中断。请重试。）")
         logger.warning("工具调用循环达到上限，强制收尾")
 
-    # 分块发送收集到的回复
-    if not ctx.replies and not replied:
-        ctx.replies.append("（主持人已处理，但没有产生回复内容。）")
+    # 保存对话历史（含本轮所有新增消息）
+    s.save_history(session_key, messages)
 
-    for chunk in _split_chunks(ctx.replies):
-        await matcher.send(chunk)
+    # 兜底：如果整个循环没产生任何回复
+    if not ctx.replied:
+        await matcher.send("（主持人已处理，但没有产生回复内容。）")
 
 
 def _split_chunks(replies: list[str]) -> list[str]:

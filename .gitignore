@@ -8,7 +8,10 @@ __pycache__/
 bot/.venv/
 .venv/
 
-# 配置（含密钥，勿提交）
+# 配置文件（含密钥 AppSecret/LLM key，勿提交）
+# 主配置：bot/config.toml（由 run.py 读取注入 nonebot）
+bot/config.toml
+# 兼容：防止误建的 .env 也忽略
 .env
 bot/.env
 

@@ -39,14 +39,33 @@ class Arc:
 
     @classmethod
     def from_meta(cls, slug: str, meta: dict[str, Any]) -> "Arc":
+        # 名称字段兼容：名称/弧光名称
+        title = meta.get("名称") or meta.get("弧光名称") or slug
         return cls(
             slug=slug,
-            level=meta.get("级别", ""),
+            level=_normalize_level(meta),
             planner=meta.get("规划者", ""),
             status=meta.get("状态", "进行中"),
             current_stage=meta.get("当前阶段", "启程"),
-            title=meta.get("名称", slug),
+            title=title,
         )
+
+
+def _normalize_level(meta: dict[str, Any]) -> str:
+    """从弧光 meta 提取并归一化级别字段。
+
+    兼容多种字段名（级别/类型）与值写法（主要/主要弧光、单局/单局弧光、
+    次要局部/次要弧光 等），统一归一到 MAJOR/ONE_SHOT/MINOR。
+    无法识别的归为 MINOR（最宽松，不触发主要弧光红线）。
+    """
+    raw = str(meta.get("级别") or meta.get("类型") or "").strip()
+    if "主要" in raw:
+        return MAJOR
+    if "单局" in raw:
+        return ONE_SHOT
+    if "次要" in raw or "局部" in raw:
+        return MINOR
+    return MINOR
 
 
 def _check_red_lines(meta: dict[str, Any]) -> str | None:
@@ -60,7 +79,7 @@ def _check_red_lines(meta: dict[str, Any]) -> str | None:
     span = meta.get("跨度", "")
     if "多场" in str(span) or "跨" in str(span):
         return "体量超出单局"
-    if meta.get("级别") == MAJOR:
+    if _normalize_level(meta) == MAJOR:
         return "级别标注为主要"
     return None
 
@@ -69,8 +88,10 @@ def balance_report(store: "Store") -> dict[str, int]:
     """当前进行中弧光的并行计数。"""
     counts = {MAJOR: 0, ONE_SHOT: 0, MINOR: 0}
     for d in store.list_docs("story-arcs"):
-        if d["meta"].get("状态") == "进行中":
-            lv = d["meta"].get("级别", MINOR)
+        # 状态兼容：进行中/草案/活跃 都算进行中（草案是预置但未启用的）
+        status = str(d["meta"].get("状态", "进行中"))
+        if "进行" in status or "活跃" in status or "草案" in status:
+            lv = _normalize_level(d["meta"])
             counts[lv] = counts.get(lv, 0) + 1
     return counts
 

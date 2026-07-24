@@ -26,8 +26,8 @@ class LLMConfig:
 
 
 def config() -> LLMConfig:
-    # 从 NoneBot 配置读取（.env 由 nonebot.init() 加载到 driver.config）。
-    # NoneBot 会把 .env 键名转为小写属性：ATRPG_LLM_BASE_URL -> atrpg_llm_base_url
+    # 从 NoneBot 配置读取。config.toml 由 run.py 拍平后通过 nonebot.init(**kwargs)
+    # 注入（init kwargs 优先级最高），落入 driver.config 的小写属性。
     cfg = get_driver().config
     return LLMConfig(
         base_url=cfg.atrpg_llm_base_url,
@@ -56,14 +56,17 @@ class ToolCall:
 
 @dataclass
 class AssistantMessage:
-    """一轮 LLM 回复：纯文本内容 + 可能的工具调用。
+    """一轮 LLM 回复：纯文本内容 + 可能的工具调用 + token 用量。
 
     content 为助手输出的可见文本（可为空）。
     tool_calls 为它要求执行的工具；为空表示这轮不需要调用工具（通常是收尾）。
+    usage 为本轮 token 用量（prompt_tokens/completion_tokens/cached_tokens），
+    用于成本监控与缓存命中观察。
     """
 
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    usage: dict[str, int] = field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -119,7 +122,19 @@ async def chat_with_tools(
             args = {}
         tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
 
-    return AssistantMessage(content=content, tool_calls=tool_calls)
+    # 提取 token 用量（含前缀缓存命中数，DeepSeek/OpenAI 兼容协议）
+    usage: dict[str, int] = {}
+    if resp.usage:
+        cached = 0
+        if resp.usage.prompt_tokens_details:
+            cached = getattr(resp.usage.prompt_tokens_details, "cached_tokens", 0) or 0
+        usage = {
+            "prompt_tokens": resp.usage.prompt_tokens or 0,
+            "completion_tokens": resp.usage.completion_tokens or 0,
+            "cached_tokens": cached,
+        }
+
+    return AssistantMessage(content=content, tool_calls=tool_calls, usage=usage)
 
 
 def assistant_to_message(msg: AssistantMessage) -> dict[str, Any]:

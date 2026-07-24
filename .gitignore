@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# venv（项目自包含，但不入 git）
+bot/.venv/
+.venv/
+
+# 配置（含密钥，勿提交）
+.env
+bot/.env
+
+# NoneBot 运行缓存
+.bot_cache/
+
+# 工作区
+.workbuddy/
+.zcode/
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

@@ -215,8 +215,8 @@ async def draft_character(
     if ctx.send_fn:
         await ctx.send_fn(card)
     return (
-        f"角色卡草案已落盘到 data/characters/{slug}.md（状态:待确认），已展示玩家可见摘要。"
-        "等待玩家回复确认（如「确认」「就这样」）后，调用 finalize_character 转为正式。"
+        f"角色卡草案已落盘到 data/characters/{slug}.md（状态:待确认），角色卡已直接发送给玩家。"
+        "**不要再调用 reply**——角色卡已发出。等待玩家下一条消息回复确认后，调用 finalize_character 转为正式。"
     )
 
 
@@ -847,9 +847,19 @@ async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreat
 
     # 流式回复：reply 工具被调用时立即发群，不等循环结束。
     # 包装 matcher.send 为 send_fn 注入 ToolContext。
+    # 捕获 QQ 去重错误（ActionFailed code=40054005）：不冒泡给 LLM，否则 LLM 会误以为
+    # 没发成功而重试 reply，形成无效循环。去重说明 QQ 已收到或拦截，视为已发送。
     async def _send(content: str) -> None:
-        for chunk in _split_chunks([content]):
-            await matcher.send(chunk)
+        import asyncio
+        chunks = _split_chunks([content])
+        for i, chunk in enumerate(chunks):
+            if i > 0:
+                await asyncio.sleep(0.5)  # 连续分块间小延迟，避免触发 QQ 去重
+            try:
+                await matcher.send(chunk)
+            except Exception as e:
+                # QQ 去重(40054005)等发送失败：记录但不冒泡，避免 LLM 重试循环
+                logger.warning(f"发送消息到群失败（可能去重）：{e}")
 
     ctx = ToolContext(
         store=s, member_openid=member_openid, group_id=group_id,

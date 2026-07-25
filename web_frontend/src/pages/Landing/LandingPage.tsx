@@ -1,6 +1,4 @@
-interface LandingPageProps {
-  onEnterConsole: () => void;
-}
+import { useNavigate } from "react-router-dom";
 
 const cardStyle = {
   flex: "1 1 200px",
@@ -17,29 +15,21 @@ const cardStyle = {
 
 const features = [
   {
-    key: "gm",
+    key: "console",
     title: "🎭 GM 控制台",
     desc: "管理游戏会话、角色、场景和故事线",
-    action: "onEnterConsole" as const,
+    path: "/console",
   },
   {
     key: "play",
     title: "🎮 玩家入口",
     desc: "加入游戏、查看角色状态、提交行动",
-    action: null,
-  },
-  {
-    key: "observe",
-    title: "👀 观众模式",
-    desc: "实时观看游戏进程和聊天",
-    action: null,
+    path: "/player",
   },
 ] as const;
 
-export default function LandingPage({ onEnterConsole }: LandingPageProps) {
-  const handlers: Record<string, (() => void) | undefined> = {
-    onEnterConsole,
-  };
+export default function LandingPage() {
+  const navigate = useNavigate();
 
   return (
     <div
@@ -73,12 +63,7 @@ export default function LandingPage({ onEnterConsole }: LandingPageProps) {
           <div
             key={f.key}
             style={cardStyle}
-            onClick={() => {
-              if (f.action) {
-                const h = handlers[f.action];
-                h?.();
-              }
-            }}
+            onClick={() => navigate(f.path)}
             onMouseEnter={(e) => {
               e.currentTarget.style.borderColor = "#e94560";
               e.currentTarget.style.transform = "translateY(-2px)";

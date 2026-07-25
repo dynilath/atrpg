@@ -1,6 +1,5 @@
 import { ReactNode } from "react";
-
-type Page = "landing" | "console";
+import { useNavigate, useLocation } from "react-router-dom";
 
 const styles = {
   container: {
@@ -45,38 +44,39 @@ const styles = {
   },
 } as const;
 
+const navItems = [
+  { label: "首页", path: "/" },
+  { label: "控制台", path: "/console" },
+  { label: "玩家界面", path: "/player" },
+];
+
 interface LayoutProps {
   children: ReactNode;
-  currentPage?: Page;
-  onNavigate?: (page: Page) => void;
 }
 
-export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
+export default function Layout({ children }: LayoutProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <span style={styles.title} onClick={() => onNavigate?.("landing")}>
+        <span style={styles.title} onClick={() => navigate("/")}>
           ATRPG
         </span>
         <nav style={styles.nav}>
-          <a
-            style={{
-              ...styles.link,
-              ...(currentPage === "landing" ? styles.activeLink : {}),
-            }}
-            onClick={() => onNavigate?.("landing")}
-          >
-            首页
-          </a>
-          <a
-            style={{
-              ...styles.link,
-              ...(currentPage === "console" ? styles.activeLink : {}),
-            }}
-            onClick={() => onNavigate?.("console")}
-          >
-            控制台
-          </a>
+          {navItems.map((item) => (
+            <a
+              key={item.path}
+              style={{
+                ...styles.link,
+                ...(location.pathname === item.path ? styles.activeLink : {}),
+              }}
+              onClick={() => navigate(item.path)}
+            >
+              {item.label}
+            </a>
+          ))}
         </nav>
       </header>
       <main style={styles.main}>{children}</main>

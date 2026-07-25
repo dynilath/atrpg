@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* ATRPG 暗色主题 */
+@theme {
+  --color-bg-primary: #1a1a2e;
+  --color-bg-secondary: #16213e;
+  --color-bg-tertiary: #0f3460;
+  --color-accent: #e94560;
+  --color-accent-hover: #c73650;
+  --color-text-primary: #e0e0e0;
+  --color-text-secondary: #8a8a9a;
+  --color-text-muted: #555;
+  --color-border: #0f3460;
+  --color-success: #53c0a0;
+  --color-info: #4a9eff;
+  --color-user-bg: #0a1e3a;
+  --color-assistant-bg: #0a1e1a;
+  --color-system-bg: #2a0a1a;
+  --color-surface: #0f1a2e;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-tertiary);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent);
+}

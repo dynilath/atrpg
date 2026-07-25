@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import EditorChat from "./EditorChat";
 
-type ResourceKind = "story-arcs" | "characters" | "items" | "scenes" | "locations";
+type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations";
 
 interface ResourceDoc {
   slug: string;
@@ -12,7 +12,8 @@ interface ResourceDoc {
 
 const TABS: { key: ResourceKind; label: string }[] = [
   { key: "story-arcs", label: "📜 弧光" },
-  { key: "characters", label: "👤 角色" },
+  { key: "characters", label: "🧑 玩家角色" },
+  { key: "npcs", label: "👤 NPC" },
   { key: "items", label: "📦 物品" },
   { key: "scenes", label: "🎬 场景" },
   { key: "locations", label: "📍 地点" },
@@ -20,10 +21,31 @@ const TABS: { key: ResourceKind; label: string }[] = [
 
 const KIND_LABELS: Record<string, string> = {
   "story-arcs": "弧光",
-  characters: "角色",
+  characters: "玩家角色",
+  npcs: "NPC",
   items: "物品",
   scenes: "场景",
   locations: "地点",
+};
+
+/** 前端 kind → 编辑器列表 API 路径段 */
+const EDITOR_API: Record<string, string> = {
+  "story-arcs": "arcs",
+  characters: "characters",
+  npcs: "characters",
+  items: "items",
+  scenes: "scenes",
+  locations: "locations",
+};
+
+/** 前端 kind → 数据 API 路径段（详情读取） */
+const DATA_API: Record<string, string> = {
+  "story-arcs": "story-arcs",
+  characters: "characters",
+  npcs: "npcs",
+  items: "items",
+  scenes: "scenes",
+  locations: "locations",
 };
 
 export default function EditorPage() {
@@ -43,12 +65,15 @@ export default function EditorPage() {
     setSelectedMeta(null);
     setSelectedBody("");
     try {
-      const r = await fetch(`/api/editor/${kind}`);
+      const apiPath = EDITOR_API[kind];
+      const r = await fetch(`/api/editor/${apiPath}`);
       if (!r.ok) throw new Error(await r.text());
       let data = await r.json();
-      // characters endpoint returns {characters, npcs}
-      if (kind === "characters" && data.characters) {
-        data = [...(data.characters || []), ...(data.npcs || [])];
+      // characters endpoint returns {characters, npcs} — 按当前 Tab 分离
+      if (apiPath === "characters" && data.characters) {
+        data = kind === "npcs"
+          ? (data.npcs || [])
+          : (data.characters || []);
       }
       setResources(data);
     } catch (e: any) {
@@ -64,7 +89,8 @@ export default function EditorPage() {
       setSelectedBody("");
       setSelectedMeta(null);
       try {
-        const r = await fetch(`/api/editor/${kind}/${slug}`);
+        const dataKind = DATA_API[kind];
+        const r = await fetch(`/api/data/${dataKind}/${slug}`);
         if (!r.ok) throw new Error(await r.text());
         const data = await r.json();
         setSelectedMeta(data.meta);
@@ -109,7 +135,7 @@ export default function EditorPage() {
       fontSize: 12,
       cursor: "pointer",
       borderRadius: "4px 4px 0 0",
-      border: "none",
+      borderWidth: 0,
       background: "transparent",
       color: "#8a8a9a",
       whiteSpace: "nowrap" as const,

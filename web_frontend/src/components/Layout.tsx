@@ -1,5 +1,6 @@
 import { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { useUserIdentity } from "../hooks/useUserIdentity";
 
 const styles = {
   container: {
@@ -27,6 +28,7 @@ const styles = {
     display: "flex",
     gap: 12,
     fontSize: 13,
+    flex: 1,
   },
   link: {
     color: "#8a8a9a",
@@ -39,17 +41,24 @@ const styles = {
     color: "#e0e0e0",
     background: "#0f3460",
   },
+  userInfo: {
+    fontSize: 12,
+    color: "#8a8a9a",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  adminBadge: {
+    fontSize: 10,
+    background: "#e94560",
+    color: "#fff",
+    padding: "1px 5px",
+    borderRadius: 3,
+  },
   main: {
     padding: 0,
   },
 } as const;
-
-const navItems = [
-  { label: "首页", path: "/" },
-  { label: "玩家", path: "/player" },
-  { label: "编辑器", path: "/editor" },
-  { label: "控制台", path: "/console" },
-];
 
 interface LayoutProps {
   children: ReactNode;
@@ -58,6 +67,20 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, loading } = useUserIdentity();
+
+  const isAdmin = user?.is_admin ?? false;
+
+  const navItems = [
+    { label: "首页", path: "/" },
+    { label: "游戏聊天", path: "/player" },
+    ...(isAdmin
+      ? [
+          { label: "编辑器", path: "/editor" },
+          { label: "控制台", path: "/console" },
+        ]
+      : []),
+  ];
 
   return (
     <div style={styles.container}>
@@ -79,6 +102,12 @@ export default function Layout({ children }: LayoutProps) {
             </a>
           ))}
         </nav>
+        {!loading && user && (
+          <div style={styles.userInfo}>
+            <span>{user.display_name}</span>
+            {isAdmin && <span style={styles.adminBadge}>管理员</span>}
+          </div>
+        )}
       </header>
       <main style={styles.main}>{children}</main>
     </div>

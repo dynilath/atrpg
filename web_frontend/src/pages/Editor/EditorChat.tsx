@@ -16,6 +16,7 @@ interface ChatMsg {
 const KIND_API: Record<string, string> = {
   "story-arcs": "arcs",
   characters: "characters",
+  npcs: "characters",
   items: "items",
   scenes: "scenes",
   locations: "locations",
@@ -23,7 +24,8 @@ const KIND_API: Record<string, string> = {
 
 const PROMPT_PLACEHOLDERS: Record<string, string> = {
   "story-arcs": '例如："设计一个码头罢工事件的单局弧光"',
-  characters: '例如："创建一个狡诈的走私商人，背后有更大的势力"',
+  characters: '例如："创建一个叛逃的帝国法师"',
+  npcs: '例如："创建一个港口守夜人队长，外冷内热的老兵"',
   items: '例如："设计一把名为潮汐之刃的魔法剑"',
   scenes: '例如："设计一个地下黑市场景，在码头仓库区"',
   locations: '例如："设计灰港区的地下黑市"',
@@ -50,10 +52,13 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
 
     try {
       const apiEndpoint = KIND_API[kind] || "arcs";
+      const body: Record<string, string> = { prompt: text };
+      if (kind === "characters") body.type = "pc";
+      if (kind === "npcs") body.type = "npc";
       const r = await fetch(`/api/editor/${apiEndpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text }),
+        body: JSON.stringify(body),
       });
       const data = await r.json();
 

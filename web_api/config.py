@@ -19,6 +19,7 @@ class WebConfig:
     dev_mode: bool = True
     vite_url: str = "http://localhost:5173"
     log_level: str = "INFO"
+    admin_users: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -86,6 +87,7 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
     wc.dev_mode = web.get("dev_mode", wc.dev_mode)
     wc.vite_url = web.get("vite_url", wc.vite_url)
     wc.log_level = web.get("log_level", wc.log_level)
+    wc.admin_users = web.get("admin_users", wc.admin_users)
     ac.web = wc
 
     return ac

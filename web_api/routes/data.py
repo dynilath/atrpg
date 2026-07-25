@@ -56,7 +56,7 @@ async def read_doc(kind: str, slug: str):
         if d is None:
             return JSONResponse({"error": "不存在"}, status_code=404)
         meta, body = d
-        return JSONResponse({"meta": meta, "body": body})
+        return JSONResponse({"meta": _json_safe(meta), "body": body})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

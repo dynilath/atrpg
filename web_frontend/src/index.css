@@ -1,33 +1,225 @@
-@import "tailwindcss";
+/* ═══════════════════════════════════════════════════════════════
+   ATRPG Design System — Tailwind v4 + CSS Variables
+   .design_library/atrpg 的完整 token 体系，映射为 Tailwind 工具类
+   ═══════════════════════════════════════════════════════════════ */
 
-/* ATRPG 暗色主题 */
-@theme {
-  --color-bg-primary: #1a1a2e;
-  --color-bg-secondary: #16213e;
-  --color-bg-tertiary: #0f3460;
-  --color-accent: #e94560;
-  --color-accent-hover: #c73650;
-  --color-text-primary: #e0e0e0;
-  --color-text-secondary: #8a8a9a;
-  --color-text-muted: #555;
-  --color-border: #0f3460;
-  --color-success: #53c0a0;
-  --color-info: #4a9eff;
-  --color-user-bg: #0a1e3a;
-  --color-assistant-bg: #0a1e1a;
-  --color-system-bg: #2a0a1a;
-  --color-surface: #0f1a2e;
+/* ============================================================
+   CSS VARIABLES — 跨主题动态值
+   (Tailwind @theme 引用这些变量，实现三模式切换)
+   ============================================================ */
+
+:root {
+  /* ── 语义色 ── */
+  --color-primary-val: #8b2c3a;
+  --color-accent-val: #8b2c3a;
+  --color-accent-hover-val: #7a2432;
+  --color-primary-container-val: #fdf2f4;
+  --color-on-primary-val: #ffffff;
+  --color-surface-val: #faf6f1;
+  --color-surface-dim-val: #f3ede5;
+  --color-surface-container-low-val: #f3ede5;
+  --color-surface-container-high-val: #e6ddd2;
+  --color-bg-val: #faf6f1;
+  --color-fg-val: #3a2b22;
+  --color-border-val: #e6ddd2;
+  --color-muted-val: #968672;
+  --color-muted-foreground-val: #968672;
+  --color-success-val: #2f884d;
+  --color-warning-val: #c48718;
+  --color-error-val: #d94040;
+  --color-info-val: #4a8cb8;
+
+  /* ── 阴影 ── */
+  --shadow-1-val: 0 1px 3px rgba(58, 43, 34, 0.06), 0 1px 2px rgba(58, 43, 34, 0.04);
+  --shadow-2-val: 0 4px 8px -2px rgba(58, 43, 34, 0.1);
+  --shadow-3-val: 0 8px 20px -4px rgba(58, 43, 34, 0.14);
+  --shadow-4-val: 0 16px 36px -8px rgba(58, 43, 34, 0.2);
+  --shadow-5-val: 0 24px 56px -16px rgba(58, 43, 34, 0.28);
+
+  /* ── 排版 ── */
+  --font-display: Georgia, 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  --font-heading: Georgia, 'Noto Serif SC', 'Songti SC', 'SimSun', serif;
+  --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC',
+    'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas',
+    'Courier New', monospace;
 }
 
+[data-theme="dark"] {
+  --color-primary-val: #c06078;
+  --color-accent-val: #c06078;
+  --color-accent-hover-val: #d48096;
+  --color-primary-container-val: #2e1a1f;
+  --color-on-primary-val: #1a1a2e;
+  --color-surface-val: #1a1a2e;
+  --color-surface-dim-val: #1e1e32;
+  --color-surface-container-low-val: #1e1e32;
+  --color-surface-container-high-val: #2e2e4a;
+  --color-bg-val: #1a1a2e;
+  --color-fg-val: #eaeaf0;
+  --color-border-val: #2e2e4a;
+  --color-muted-val: #7a7a96;
+  --color-muted-foreground-val: #7a7a96;
+  --color-success-val: #96d4a0;
+  --color-warning-val: #d4ca88;
+  --color-error-val: #d49090;
+  --color-info-val: #94c0d8;
+
+  --shadow-1-val: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.16);
+  --shadow-2-val: 0 4px 8px -2px rgba(0, 0, 0, 0.28);
+  --shadow-3-val: 0 8px 20px -4px rgba(0, 0, 0, 0.34);
+  --shadow-4-val: 0 16px 36px -8px rgba(0, 0, 0, 0.42);
+  --shadow-5-val: 0 24px 56px -16px rgba(0, 0, 0, 0.5);
+}
+
+/* ============================================================
+   TAILWIND v4 + DESIGN TOKENS
+   ============================================================ */
+@import "tailwindcss";
+
+@theme {
+  /* ── 颜色（引用 CSS 变量以实现主题切换）── */
+  --color-primary: var(--color-primary-val);
+  --color-accent: var(--color-accent-val);
+  --color-accent-hover: var(--color-accent-hover-val);
+  --color-primary-container: var(--color-primary-container-val);
+  --color-on-primary: var(--color-on-primary-val);
+  --color-surface: var(--color-surface-val);
+  --color-surface-dim: var(--color-surface-dim-val);
+  --color-surface-container-low: var(--color-surface-container-low-val);
+  --color-surface-container-high: var(--color-surface-container-high-val);
+  --color-bg: var(--color-bg-val);
+  --color-fg: var(--color-fg-val);
+  --color-border: var(--color-border-val);
+  --color-muted: var(--color-muted-val);
+  --color-muted-foreground: var(--color-muted-foreground-val);
+  --color-success: var(--color-success-val);
+  --color-warning: var(--color-warning-val);
+  --color-error: var(--color-error-val);
+  --color-info: var(--color-info-val);
+
+  /* ── 间距（覆盖 Tailwind 默认以匹配 4px 网格）── */
+  --spacing-5: 24px;
+  --spacing-6: 32px;
+  --spacing-7: 48px;
+  --spacing-8: 64px;
+
+  /* ── 字号 ── */
+  --font-size-display: 3.5rem; /* 56px */
+  --font-size-h1: 2.5rem; /* 40px */
+  --font-size-h2: 2rem; /* 32px */
+  --font-size-h3: 1.5rem; /* 24px */
+  --font-size-h4: 1.25rem; /* 20px */
+  --font-size-caption: 0.75rem; /* 12px */
+  --font-size-eyebrow: 0.6875rem; /* 11px */
+
+  /* ── 字重 ── */
+  --font-weight-display: 700;
+  --font-weight-heading: 600;
+
+  /* ── 行高 ── */
+  --leading-display: 1.1;
+  --leading-heading: 1.25;
+
+  /* ── 字体家族 ── */
+  --font-display: var(--font-display);
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  /* ── 圆角 ── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* ── 阴影（引用 CSS 变量）── */
+  --shadow-card: var(--shadow-1-val);
+  --shadow-card-hover: var(--shadow-2-val);
+  --shadow-float: var(--shadow-3-val);
+  --shadow-modal: var(--shadow-4-val);
+  --shadow-overlay: var(--shadow-5-val);
+}
+
+/* ── Dark variant（基于 data-theme 属性）── */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ============================================================
+   TYPOGRAPHY UTILITY CLASSES
+   ============================================================ */
+.atrpg-display {
+  font-family: var(--font-display);
+  font-size: var(--font-size-display);
+  font-weight: var(--font-weight-display);
+  line-height: var(--leading-display);
+  letter-spacing: -0.02em;
+}
+.atrpg-h1 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h1);
+  font-weight: var(--font-weight-display);
+  line-height: 1.2;
+}
+.atrpg-h2 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h2);
+  font-weight: var(--font-weight-heading);
+  line-height: var(--leading-heading);
+}
+.atrpg-h3 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h3);
+  font-weight: var(--font-weight-heading);
+  line-height: 1.3;
+}
+.atrpg-h4 {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-h4);
+  font-weight: var(--font-weight-heading);
+  line-height: 1.4;
+}
+.atrpg-body {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.6;
+}
+.atrpg-lead {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+.atrpg-caption {
+  font-family: var(--font-body);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+}
+.atrpg-eyebrow {
+  font-family: var(--font-body);
+  font-size: var(--font-size-eyebrow);
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.atrpg-mono {
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+/* ============================================================
+   GLOBAL DEFAULTS
+   ============================================================ */
 body {
   margin: 0;
   padding: 0;
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--color-bg-val);
+  color: var(--color-fg-val);
+  font-family: var(--font-body);
+  font-size: 1rem;
+  line-height: 1.6;
 }
 
-/* 滚动条美化 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -36,9 +228,27 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-bg-tertiary);
+  background: var(--color-muted-val);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-accent);
+  background: var(--color-primary-val);
+}
+
+::selection {
+  background: var(--color-primary-container-val);
+  color: var(--color-primary-val);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary-val);
+  outline-offset: 2px;
+}
+
+/* ── Chat message role-specific backgrounds (not in @theme) ── */
+.chat-bg-assistant {
+  background: rgba(59, 163, 95, 0.08);
+}
+.chat-bg-system {
+  background: rgba(217, 64, 64, 0.06);
 }

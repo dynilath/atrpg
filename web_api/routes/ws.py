@@ -25,6 +25,7 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
 
@@ -53,7 +54,7 @@ async def session_ws(websocket: WebSocket, session_key: str):
 
     await websocket.accept()
     await websocket.send_json({"type": "connected", "session_key": session_key})
-    logging.info(f"WebSocket 已连接: {session_key}")
+    logger.info(f"WebSocket 已连接: {session_key}")
 
     # 用户身份（由客户端 identify 消息设置）
     user_provider: str = ""
@@ -92,11 +93,11 @@ async def session_ws(websocket: WebSocket, session_key: str):
             # 身份识别
             if msg_type == "identify":
                 user_provider = (payload.get("provider") or "").strip()
-                user_openid = (payload.get("openid") or "").strip()
+                user_openid = (payload.get("id") or payload.get("openid") or "").strip()
                 if user_provider and user_openid:
                     user_char_slug = _read_user_char_slug(user_provider, user_openid)
-                    logging.info(
-                        f"WS 用户身份: {user_provider}:{user_openid}, 角色: {user_char_slug}"
+                    logger.info(
+                        f"WS identify: {user_provider}:{user_openid} char={user_char_slug}"
                     )
                 continue
 
@@ -134,7 +135,7 @@ async def session_ws(websocket: WebSocket, session_key: str):
                         "payload": {"text": content},
                     })
                 except Exception as e:
-                    logging.warning(f"WS send 失败: {e}")
+                    logger.warning(f"WS send 失败: {e}")
 
             # mode 区分：chat/edit
             msg_mode = msg_type  # "chat" → "game", "edit" → "edit"
@@ -146,6 +147,11 @@ async def session_ws(websocket: WebSocket, session_key: str):
             )
             group_id = session_key
 
+            logger.info(
+                f"WS msg: session={session_key} mode={process_mode} "
+                f"char={user_char_slug} text={text[:60]}"
+            )
+
             input_data = TurnInput(
                 store=store,
                 session_key=session_key,
@@ -154,8 +160,13 @@ async def session_ws(websocket: WebSocket, session_key: str):
                 text=text,
                 send_fn=_send,
                 mode=process_mode,
+                char_slug=user_char_slug,
             )
             result = await process_turn(input_data)
+            logger.info(
+                f"WS done: replied={result.replied} error={result.error!r} "
+                f"usage={result.usage}"
+            )
 
             await websocket.send_json({
                 "type": "reply_done",
@@ -168,9 +179,9 @@ async def session_ws(websocket: WebSocket, session_key: str):
             })
 
     except WebSocketDisconnect:
-        logging.debug(f"WebSocket 断开: {session_key}")
-    except Exception as e:
-        logging.debug(f"WebSocket 异常: {session_key} — {e}")
+        logger.info(f"WS 断开: {session_key}")
+    except Exception:
+        logger.exception(f"WS 异常: {session_key}")
     finally:
         try:
             await websocket.close()

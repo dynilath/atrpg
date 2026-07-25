@@ -1,83 +1,55 @@
 import { useNavigate } from "react-router-dom";
+import { Card } from "../../components/ui";
+import { useUserStore, type Permission } from "../../store/userStore";
 
-const cardStyle = {
-  flex: "1 1 200px",
-  maxWidth: 280,
-  minWidth: 200,
-  padding: "24px 20px",
-  borderRadius: 8,
-  background: "#16213e",
-  border: "1px solid #0f3460",
-  cursor: "pointer",
-  textAlign: "center" as const,
-  transition: "border-color 0.2s, transform 0.2s",
+interface FeatureCard {
+  key: string;
+  title: string;
+  desc: string;
+  path: string;
+}
+
+const allFeatures: Record<Permission, FeatureCard[]> = {
+  "玩家": [
+    { key: "play", title: "玩家入口", desc: "加入游戏、查看角色状态、提交行动", path: "/player" },
+  ],
+  "主持人": [
+    { key: "play", title: "玩家入口", desc: "加入游戏、查看角色状态、提交行动", path: "/player" },
+    { key: "editor", title: "备团编辑器", desc: "管理弧光、角色、NPC、场景和物品", path: "/editor" },
+  ],
+  "管理员": [
+    { key: "play", title: "玩家入口", desc: "加入游戏、查看角色状态、提交行动", path: "/player" },
+    { key: "editor", title: "备团编辑器", desc: "管理弧光、角色、NPC、场景和物品", path: "/editor" },
+    { key: "console", title: "GM 控制台", desc: "查看会话历史、LLM 用量与轮次详情", path: "/console" },
+  ],
 };
-
-const features = [
-  {
-    key: "console",
-    title: "🎭 GM 控制台",
-    desc: "管理游戏会话、角色、场景和故事线",
-    path: "/console",
-  },
-  {
-    key: "play",
-    title: "🎮 玩家入口",
-    desc: "加入游戏、查看角色状态、提交行动",
-    path: "/player",
-  },
-] as const;
 
 export default function LandingPage() {
   const navigate = useNavigate();
+  const user = useUserStore((s) => s.user);
+  const permission = user?.permission ?? "玩家";
+  const cards = allFeatures[permission] || allFeatures["玩家"];
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "calc(100vh - 160px)",
-        padding: "40px 20px",
-      }}
-    >
-      <div style={{ textAlign: "center", marginBottom: 48 }}>
-        <h1 style={{ fontSize: 36, color: "#e94560", margin: "0 0 12px 0" }}>
-          ATRPG
-        </h1>
-        <p style={{ fontSize: 16, color: "#8a8a9a", margin: 0 }}>
+    <div className="flex-1 flex flex-col items-center justify-center px-5 py-8 gap-7">
+      <div className="text-center">
+        <h1 className="atrpg-display text-primary mb-3">ATRPG</h1>
+        <p className="atrpg-lead text-muted-foreground">
           AI-driven Tabletop Role-Playing Game
         </p>
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
-          justifyContent: "center",
-        }}
-      >
-        {features.map((f) => (
-          <div
+      <div className="flex gap-5 flex-wrap justify-center max-w-[640px]">
+        {cards.map((f) => (
+          <Card
             key={f.key}
-            style={cardStyle}
+            variant="interactive"
+            title={f.title}
             onClick={() => navigate(f.path)}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = "#e94560";
-              e.currentTarget.style.transform = "translateY(-2px)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = "#0f3460";
-              e.currentTarget.style.transform = "translateY(0)";
-            }}
+            className="max-w-[280px] min-w-[200px] text-center"
           >
-            <div style={{ fontSize: 24, marginBottom: 12 }}>{f.title}</div>
-            <div style={{ fontSize: 13, color: "#8a8a9a", lineHeight: 1.5 }}>
-              {f.desc}
-            </div>
-          </div>
+            {f.desc}
+          </Card>
         ))}
       </div>
     </div>

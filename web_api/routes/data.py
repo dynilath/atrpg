@@ -1,10 +1,8 @@
-"""data.py — /api/data/* 路由。
-
-data/ 目录下游戏档案的 CRUD（角色/NPC/场景/地点/道具/弧光等）。
-"""
+"""data.py — /api/data/* 路由。"""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter
@@ -12,9 +10,10 @@ from fastapi.responses import JSONResponse
 
 from ..deps import get_store
 
+logger = logging.getLogger(__name__)
+
 
 def _json_safe(obj: Any) -> Any:
-    """递归将不可 JSON 序列化的类型转为字符串。"""
     import datetime
     if isinstance(obj, (datetime.date, datetime.datetime)):
         return obj.isoformat()
@@ -35,35 +34,38 @@ DATA_KINDS = (
 
 @router.get("/{kind}")
 async def list_docs(kind: str):
-    """列出某类数据档案摘要。"""
     if kind not in DATA_KINDS:
         return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
     try:
         s = get_store()
-        return JSONResponse(_json_safe(s.list_docs(kind)))
+        docs = s.list_docs(kind)
+        logger.debug(f"list {kind}: {len(docs)} 条")
+        return JSONResponse(_json_safe(docs))
     except Exception as e:
+        logger.exception(f"list {kind} 失败")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.get("/{kind}/{slug}")
 async def read_doc(kind: str, slug: str):
-    """读取完整档案（meta + body）。"""
     if kind not in DATA_KINDS:
         return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
     try:
         s = get_store()
         d = s.read(kind, slug)
         if d is None:
+            logger.debug(f"read {kind}/{slug}: 不存在")
             return JSONResponse({"error": "不存在"}, status_code=404)
         meta, body = d
+        logger.debug(f"read {kind}/{slug}: ok body={len(body)}chars")
         return JSONResponse({"meta": _json_safe(meta), "body": body})
     except Exception as e:
+        logger.exception(f"read {kind}/{slug} 失败")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @router.post("/{kind}/{slug}")
 async def write_doc(kind: str, slug: str, body: dict[str, Any]):
-    """写入/更新档案。body 格式: {"meta": {...}, "body": "..."}"""
     if kind not in DATA_KINDS:
         return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
     try:
@@ -71,6 +73,8 @@ async def write_doc(kind: str, slug: str, body: dict[str, Any]):
         meta = body.get("meta", {})
         content = body.get("body", "")
         p = s.write(kind, slug, meta, content)
+        logger.info(f"write {kind}/{slug}: ok path={p}")
         return JSONResponse({"ok": True, "path": str(p)})
     except Exception as e:
+        logger.exception(f"write {kind}/{slug} 失败")
         return JSONResponse({"error": str(e)}, status_code=500)

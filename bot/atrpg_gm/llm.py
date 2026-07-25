@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+logger = logging.getLogger(__name__)
 _client: AsyncOpenAI | None = None
 
 
@@ -69,7 +71,7 @@ def client() -> AsyncOpenAI:
     global _client
     if _client is None:
         c = config()
-        _client = AsyncOpenAI(base_url=c.base_url, api_key=c.api_key)
+        _client = AsyncOpenAI(base_url=c.base_url, api_key=c.api_key, timeout=60.0)
     return _client
 
 
@@ -133,6 +135,7 @@ async def chat_with_tools(
 
     c = config()
     m = model or c.model
+    logger.info(f"LLM call: model={m} msgs={len(messages)} tools={len(tools)}")
     resp = await client().chat.completions.create(
         model=m,
         messages=messages,
@@ -141,6 +144,9 @@ async def chat_with_tools(
     )
     msg = resp.choices[0].message
     content = msg.content or ""
+    logger.debug(
+        f"LLM resp: content={len(content)}chars tool_calls={len(msg.tool_calls or [])}"
+    )
 
     tool_calls: list[ToolCall] = []
     for tc in msg.tool_calls or []:

@@ -1,13 +1,28 @@
 /** API 客户端封装。
 
-开发模式下 Vite 反向代理到 FastAPI，所以 API 路径直接用相对路径。
-生产模式下同域，路径一致。
+自动附带用户身份 header（X-Provider / X-User-Id），供后端权限校验。
 */
 
 const BASE = "";
 
+function authHeaders(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem("atrpg_user");
+    if (!raw) return {};
+    const u = JSON.parse(raw);
+    return {
+      "X-Provider": u.provider || "",
+      "X-User-Id": u.id || u.openid || "",
+    };
+  } catch {
+    return {};
+  }
+}
+
 export async function apiGet<T = unknown>(path: string): Promise<T> {
-  const r = await fetch(`${BASE}${path}`);
+  const r = await fetch(`${BASE}${path}`, {
+    headers: { ...authHeaders() },
+  });
   if (!r.ok) {
     const err = await r.json().catch(() => ({ error: r.statusText }));
     throw new Error(err.error || `HTTP ${r.status}`);
@@ -21,7 +36,7 @@ export async function apiPost<T = unknown>(
 ): Promise<T> {
   const r = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!r.ok) {

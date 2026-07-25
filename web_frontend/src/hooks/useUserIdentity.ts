@@ -2,61 +2,63 @@
 
 首次访问时，向服务器请求分配一个用户 ID（POST /api/users/assign），
 存入 localStorage。后续访问直接用已有 ID 去 /api/users/register 登录。
-对于 QQ 等外部来源，使用 provider=qq + 平台 openid 标记。
 
 存储结构（localStorage）：
-  atrpg_user = { provider: "web", openid: "..." }
+  atrpg_user = { provider: "web", id: "..." }
 */
 
 import { useEffect, useCallback } from "react";
-import { useUserStore, UserInfo } from "../store/userStore";
+import { useUserStore, type UserInfo } from "../store/userStore";
 
 const STORAGE_KEY = "atrpg_user";
 
 interface StoredUser {
   provider: string;
-  openid: string;
+  id: string;
+  /** 兼容旧版 openid 字段 */
+  openid?: string;
 }
 
 function getStoredUser(): StoredUser | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as StoredUser;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return {
+      provider: String(parsed.provider || ""),
+      id: String(parsed.id || parsed.openid || ""),
+    };
   } catch {
     return null;
   }
 }
 
 function setStoredUser(user: StoredUser): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ provider: user.provider, id: user.id }));
 }
 
 export function useUserIdentity() {
   const { user, loading, error, initialized, setUser, setLoading, setError, setInitialized } = useUserStore();
 
-  /** 初始化：无本地 ID → 找服务器分配；有本地 ID → 注册/登录 */
   const init = useCallback(async () => {
     setLoading(true);
     try {
       let stored = getStoredUser();
 
-      // 没有本地 ID → 向服务器请求分配
       if (!stored) {
         const r = await fetch("/api/users/assign", { method: "POST" });
         if (!r.ok) throw new Error(await r.text());
         const data = await r.json();
-        stored = { provider: data.provider, openid: data.openid };
+        stored = { provider: data.provider, id: data.id };
         setStoredUser(stored);
         setUser(data as UserInfo);
         return;
       }
 
-      // 有本地 ID → 注册/登录
       const r = await fetch("/api/users/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(stored),
+        body: JSON.stringify({ provider: stored.provider, id: stored.id }),
       });
       if (!r.ok) throw new Error(await r.text());
       const data: UserInfo = await r.json();
@@ -72,7 +74,7 @@ export function useUserIdentity() {
       if (!stored) return;
       try {
         const r = await fetch(
-          `/api/users/${stored.provider}/${stored.openid}/bind`,
+          `/api/users/${stored.provider}/${stored.id}/bind`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -97,7 +99,7 @@ export function useUserIdentity() {
       if (!stored) return;
       try {
         const r = await fetch(
-          `/api/users/${stored.provider}/${stored.openid}/display-name`,
+          `/api/users/${stored.provider}/${stored.id}/display-name`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -116,7 +118,6 @@ export function useUserIdentity() {
     [user, setUser, setError]
   );
 
-  // 启动时初始化（仅一次）
   useEffect(() => {
     if (!initialized) {
       setInitialized();
@@ -128,7 +129,7 @@ export function useUserIdentity() {
     user,
     loading,
     error,
-    openid: user?.openid || getStoredUser()?.openid || "",
+    userId: user?.id || getStoredUser()?.id || "",
     provider: user?.provider || getStoredUser()?.provider || "",
     bindCharacter,
     updateDisplayName,

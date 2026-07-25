@@ -37,6 +37,7 @@ class TurnInput:
     text: str
     send_fn: SendMessage | None = None
     mode: str = "game"  # "game" | "create_character" | "edit"
+    char_slug: str | None = None  # Web 端已知的角色 slug（跳过 player_binding 查询）
 
 
 @dataclass

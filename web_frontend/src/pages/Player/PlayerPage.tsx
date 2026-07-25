@@ -1,13 +1,15 @@
-/** 玩家界面的主布局 — 聊天区 + 侧边面板。 */
+/** 玩家界面主布局 — 聊天区 + 侧边面板（角色/场景）。 */
 
 import { useEffect, useState, useCallback } from "react";
 import { useGameStore } from "../../store/gameStore";
 import { useGameSocket } from "../../hooks/useGameSocket";
 import { useUserStore } from "../../store/userStore";
+import { Sidebar, SbSection, Button } from "../../components/ui";
 import ChatWindow from "./ChatWindow";
 import ActionInput from "./ActionInput";
 import ScenePanel from "./ScenePanel";
 import CharacterCard from "./CharacterCard";
+import CharacterCreateDialog from "./CharacterCreateDialog";
 
 interface PlayerPageProps {
   socket: ReturnType<typeof useGameSocket>;
@@ -20,96 +22,6 @@ interface CharacterOption {
   identity: string;
 }
 
-const styles = {
-  container: {
-    display: "flex",
-    height: "calc(100vh - 48px)",
-    overflow: "hidden",
-  },
-  chatArea: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column" as const,
-    background: "#1a1a2e",
-  },
-  sidebar: {
-    width: 320,
-    borderLeft: "1px solid #0f3460",
-    background: "#16213e",
-    overflowY: "auto" as const,
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 0,
-  },
-  sidebarTitle: {
-    padding: "10px 12px",
-    fontSize: 13,
-    color: "#8a8a9a",
-    textTransform: "uppercase" as const,
-    borderBottom: "1px solid #0f3460",
-  },
-  connectBar: {
-    padding: "6px 12px",
-    fontSize: 11,
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    borderBottom: "1px solid #0f3460",
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: "50%",
-    display: "inline-block",
-  },
-  bindSection: {
-    padding: "12px",
-    borderBottom: "1px solid #0f3460",
-  },
-  bindLabel: {
-    fontSize: 11,
-    color: "#8a8a9a",
-    marginBottom: 6,
-  },
-  select: {
-    width: "100%",
-    padding: "6px 8px",
-    fontSize: 12,
-    background: "#0a0a1a",
-    color: "#e0e0e0",
-    border: "1px solid #0f3460",
-    borderRadius: 4,
-    marginBottom: 6,
-  },
-  bindBtn: {
-    width: "100%",
-    padding: "6px 0",
-    fontSize: 12,
-    background: "#e94560",
-    color: "#fff",
-    border: "none",
-    borderRadius: 4,
-    cursor: "pointer",
-  },
-  unbindBtn: {
-    width: "100%",
-    padding: "6px 0",
-    fontSize: 12,
-    background: "transparent",
-    color: "#e94560",
-    border: "1px solid #e94560",
-    borderRadius: 4,
-    cursor: "pointer",
-    marginTop: 4,
-  },
-  bindStatus: {
-    fontSize: 11,
-    color: "#53c0a0",
-    textAlign: "center" as const,
-    padding: "4px 0",
-  },
-};
-
 export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
   const connected = useGameStore((s) => s.connected);
   const sessionKey = useGameStore((s) => s.sessionKey);
@@ -118,8 +30,10 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
   const [characters, setCharacters] = useState<CharacterOption[]>([]);
   const [selectedChar, setSelectedChar] = useState<string>("");
   const [loadingChars, setLoadingChars] = useState(false);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
 
   const currentCharSlug = user?.character_slug || null;
+  const hasChar = !!currentCharSlug;
 
   // 加载可选角色列表
   useEffect(() => {
@@ -129,8 +43,7 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
         const r = await fetch("/api/data/characters");
         if (!r.ok) throw new Error(await r.text());
         const data = await r.json();
-        // 后端直接返回数组，也可能返回 { characters: [...] }
-        const list = Array.isArray(data) ? data : (data.characters || []);
+        const list = Array.isArray(data) ? data : data.characters || [];
         const chars: CharacterOption[] = list.map(
           (c: { slug: string; meta: Record<string, unknown> }) => ({
             slug: c.slug,
@@ -146,11 +59,12 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
       }
     };
     loadChars();
-  }, []);
+  }, [hasChar]); // 创建角色后重新加载列表
 
   const handleBind = useCallback(async () => {
     if (selectedChar) {
       await bindCharacter(selectedChar);
+      setSelectedChar("");
     }
   }, [selectedChar, bindCharacter]);
 
@@ -158,16 +72,18 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
     await bindCharacter(null);
   }, [bindCharacter]);
 
+  const handleCreateComplete = useCallback(async (slug: string) => {
+    await bindCharacter(slug);
+    setShowCreateDialog(false);
+  }, [bindCharacter]);
+
   return (
-    <div style={styles.container}>
+    <div className="flex h-[calc(100vh-52px)] overflow-hidden">
       {/* 聊天区 */}
-      <div style={styles.chatArea}>
-        <div style={styles.connectBar}>
+      <div className="flex-1 flex flex-col bg-bg">
+        <div className="px-3 py-1.5 text-[11px] flex items-center gap-1.5 border-b border-border">
           <span
-            style={{
-              ...styles.dot,
-              background: connected ? "#53c0a0" : "#e94560",
-            }}
+            className={`w-2 h-2 rounded-full inline-block ${connected ? "bg-success" : "bg-error"}`}
           />
           {connected ? `已连接: ${sessionKey}` : "未连接"}
         </div>
@@ -176,48 +92,73 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
       </div>
 
       {/* 侧边面板 */}
-      <div style={styles.sidebar}>
-        {/* 角色绑定 */}
-        <div style={styles.sidebarTitle}>角色绑定</div>
-        <div style={styles.bindSection}>
-          {loadingChars ? (
-            <div style={{ fontSize: 11, color: "#666" }}>加载中...</div>
-          ) : (
+      <Sidebar>
+        <SbSection title="角色">
+          {hasChar ? (
             <>
-              <div style={styles.bindLabel}>
-                {currentCharSlug
-                  ? `当前绑定: ${currentCharSlug}`
-                  : "选择要绑定的角色（可多人绑定同一角色）"}
-              </div>
-              <select
-                style={styles.select}
-                value={selectedChar}
-                onChange={(e) => setSelectedChar(e.target.value)}
-              >
-                <option value="">-- 选择角色 --</option>
-                {characters.map((c) => (
-                  <option key={c.slug} value={c.slug}>
-                    {c.name} {c.identity ? `(${c.identity})` : ""}
-                  </option>
-                ))}
-              </select>
-              <button style={styles.bindBtn} onClick={handleBind} disabled={!selectedChar}>
-                绑定角色
-              </button>
-              {currentCharSlug && (
-                <button style={styles.unbindBtn} onClick={handleUnbind}>
+              <CharacterCard />
+              <div className="px-2 mt-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleUnbind}
+                  className="w-full text-error border border-error"
+                >
                   解除绑定
-                </button>
-              )}
+                </Button>
+              </div>
             </>
-          )}
-        </div>
+          ) : (
+            <div className="flex flex-col gap-2 px-2">
+              <Button onClick={() => setShowCreateDialog(true)}>
+                创建角色
+              </Button>
 
-        <div style={styles.sidebarTitle}>角色</div>
-        <CharacterCard />
-        <div style={styles.sidebarTitle}>场景</div>
-        <ScenePanel />
-      </div>
+              <div className="text-[11px] text-muted-foreground text-center pt-1">
+                或
+              </div>
+
+              {loadingChars ? (
+                <div className="text-xs text-muted-foreground text-center">加载中...</div>
+              ) : characters.length > 0 ? (
+                <div className="flex gap-1.5">
+                  <select
+                    className="flex-1 px-2 py-1.5 text-xs bg-bg text-fg border border-border rounded-sm min-w-0"
+                    value={selectedChar}
+                    onChange={(e) => setSelectedChar(e.target.value)}
+                  >
+                    <option value="">选择已有角色</option>
+                    {characters.map((c) => (
+                      <option key={c.slug} value={c.slug}>
+                        {c.name} {c.identity ? `(${c.identity})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <Button size="sm" onClick={handleBind} disabled={!selectedChar}>
+                    绑定
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground text-center">
+                  暂无角色，请先创建
+                </div>
+              )}
+            </div>
+          )}
+        </SbSection>
+
+        <SbSection title="场景">
+          <ScenePanel />
+        </SbSection>
+      </Sidebar>
+
+      {/* 创建角色对话框 */}
+      {showCreateDialog && (
+        <CharacterCreateDialog
+          onCreated={handleCreateComplete}
+          onClose={() => setShowCreateDialog(false)}
+        />
+      )}
     </div>
   );
 }

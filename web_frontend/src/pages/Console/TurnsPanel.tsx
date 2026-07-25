@@ -33,7 +33,7 @@ export default function TurnsPanel({ sessionId }: TurnsPanelProps) {
 
   if (error) {
     return (
-      <div style={{ padding: 12, color: "#e94560", fontSize: 12 }}>
+      <div style={{ padding: "var(--space-3)", color: "var(--color-error)", fontSize: 12 }}>
         {error}
       </div>
     );
@@ -49,23 +49,35 @@ export default function TurnsPanel({ sessionId }: TurnsPanelProps) {
       {usage && (
         <div
           style={{
-            padding: "8px 12px",
-            background: "#0f1a2e",
-            borderBottom: "1px solid #0f3460",
+            padding: "var(--space-2) var(--space-3)",
+            background: "var(--color-surface)",
+            borderBottom: "1px solid var(--color-border)",
             fontSize: 11,
           }}
         >
-          <div style={{ color: "#e94560", fontWeight: "bold", marginBottom: 4 }}>
+          <div
+            style={{
+              color: "var(--color-primary)",
+              fontWeight: 600,
+              marginBottom: "var(--space-1)",
+            }}
+          >
             总计用量
           </div>
-          <div style={{ color: "#6080a0" }}>
-            输入: {usage.prompt_tokens} | 输出: {usage.completion_tokens} |
-            缓存命中: {usage.cached_tokens} ({hitRate}%)
+          <div style={{ color: "var(--color-muted-foreground)" }}>
+            输入: {usage.prompt_tokens} | 输出: {usage.completion_tokens} | 缓存命中:{" "}
+            {usage.cached_tokens} ({hitRate}%)
           </div>
         </div>
       )}
       {turns.length === 0 ? (
-        <div style={{ padding: 20, color: "#555", textAlign: "center" }}>
+        <div
+          style={{
+            padding: "var(--space-5)",
+            color: "var(--color-muted-foreground)",
+            textAlign: "center",
+          }}
+        >
           暂无轮次
         </div>
       ) : (
@@ -80,37 +92,46 @@ export default function TurnsPanel({ sessionId }: TurnsPanelProps) {
             <div
               key={t.turn_no}
               style={{
-                padding: "8px 12px",
-                borderBottom: "1px solid #0f3460",
+                padding: "var(--space-2) var(--space-3)",
+                borderBottom: "1px solid var(--color-border)",
                 cursor: "pointer",
                 fontSize: 12,
               }}
             >
               <div>
                 #{t.turn_no}{" "}
-                <span style={{ color: "#8a8a9a" }}>{t.timestamp}</span>
+                <span className="atrpg-caption" style={{ color: "var(--color-muted-foreground)" }}>
+                  {t.timestamp}
+                </span>
               </div>
-              <div style={{ color: "#8a8a9a", fontSize: 11 }}>
+              <div className="atrpg-caption" style={{ color: "var(--color-muted-foreground)" }}>
                 {t.sender || "未知"}
               </div>
-              <div style={{ color: "#c0c0d0", marginTop: 3, lineHeight: 1.4 }}>
+              <div
+                style={{
+                  color: "var(--color-foreground)",
+                  marginTop: "var(--space-1)",
+                  lineHeight: 1.4,
+                }}
+              >
                 {t.player_text.substring(0, 80)}
               </div>
               {t.reply_preview && (
                 <div
                   style={{
-                    color: "#53c0a0",
-                    marginTop: 2,
+                    color: "var(--color-success)",
+                    marginTop: "var(--space-1)",
                     fontStyle: "italic",
+                    fontSize: 11,
                   }}
                 >
-                  ↳ {t.reply_preview.substring(0, 60)}
+                  {t.reply_preview.substring(0, 60)}
                 </div>
               )}
               {hasUsage && (
-                <div style={{ color: "#6080a0", fontSize: 10, marginTop: 2 }}>
-                  ↓{u.prompt_tokens} ↑{u.completion_tokens || 0} 缓存
-                  {u.cached_tokens || 0}({turnHitRate}%)
+                <div className="atrpg-caption" style={{ color: "var(--color-muted-foreground)", marginTop: 2 }}>
+                  {u.prompt_tokens} / {u.completion_tokens || 0} / 缓存{u.cached_tokens || 0}
+                  ({turnHitRate}%)
                 </div>
               )}
             </div>

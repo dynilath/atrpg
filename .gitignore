@@ -22,6 +22,7 @@ bot/.env
 # 工作区
 .workbuddy/
 .zcode/
+.design_library/
 
 # 编辑器
 .vscode/
@@ -33,3 +34,9 @@ node_modules/
 
 # frontend
 web_frontend/dist/
+
+# test data
+test_session/
+
+# test log
+*.log

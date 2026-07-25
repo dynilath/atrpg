@@ -6,7 +6,6 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 5173,
-    // 开发时 Vite 独立运行，/api 和 /ws 代理到 FastAPI 后端
     proxy: {
       "/api": "http://127.0.0.1:9090",
       "/ws": {

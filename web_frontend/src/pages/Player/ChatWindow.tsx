@@ -2,19 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import { useGameStore } from "../../store/gameStore";
+import ChatMessage from "../../components/ui/ChatMessage";
 import MarkdownRender from "../../components/MarkdownRender";
-
-const roleColors: Record<string, string> = {
-  user: "#4a9eff",
-  assistant: "#53c0a0",
-  system: "#e94560",
-};
-
-const roleBg: Record<string, string> = {
-  user: "#0a1e3a",
-  assistant: "#0a1e1a",
-  system: "#2a0a1a",
-};
 
 export default function ChatWindow() {
   const messages = useGameStore((s) => s.messages);
@@ -26,62 +15,23 @@ export default function ChatWindow() {
 
   if (messages.length === 0) {
     return (
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          color: "#555",
-          fontSize: 14,
-          padding: 20,
-        }}
-      >
-        <div style={{ textAlign: "center" }}>
-          <p style={{ marginBottom: 8, color: "#8a8a9a" }}>🎲 欢迎来到 ATRPG</p>
-          <p style={{ fontSize: 12, color: "#666" }}>
-            在下方输入框描述你的角色或行动
-          </p>
+      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm p-5">
+        <div className="text-center">
+          <p className="mb-2">欢迎来到 ATRPG</p>
+          <p className="text-xs opacity-70">在下方输入框描述你的角色或行动</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        flex: 1,
-        overflowY: "auto",
-        padding: "12px 16px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-      }}
-    >
+    <div className="flex-1 overflow-y-auto p-3 px-4 flex flex-col gap-2">
       {messages.map((m) => (
-        <div
+        <ChatMessage
           key={m.id}
-          style={{
-            padding: "8px 12px",
-            borderRadius: 8,
-            background: roleBg[m.role] || "#1a1a2e",
-            borderLeft: `3px solid ${roleColors[m.role] || "#666"}`,
-            maxWidth: "85%",
-            alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              color: roleColors[m.role] || "#666",
-              marginBottom: 4,
-              fontWeight: "bold",
-            }}
-          >
-            {m.role === "user" ? "你" : m.role === "assistant" ? "主持人" : "系统"}
-          </div>
-          <MarkdownRender content={m.content} />
-        </div>
+          role={m.role}
+          content={<MarkdownRender content={m.content} />}
+        />
       ))}
       <div ref={bottomRef} />
     </div>

@@ -1,6 +1,8 @@
 /** 编辑助手 AI 对话面板。 */
 
 import { useState, useRef, useEffect } from "react";
+import { Button, Input } from "../../components/ui";
+import ChatMessage from "../../components/ui/ChatMessage";
 
 interface EditorChatProps {
   kind: string;
@@ -70,20 +72,28 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
           {
             id: `a-${Date.now()}`,
             role: "assistant",
-            content: `✅ 已创建「${title}」\n\nslug: \`${slug}\``,
+            content: `已创建「${title}」\n\nslug: \`${slug}\``,
           },
         ]);
         onCreated(slug);
       } else {
         setMessages((prev) => [
           ...prev,
-          { id: `e-${Date.now()}`, role: "system", content: `⚠ 创建失败: ${data.error || "未知错误"}` },
+          {
+            id: `e-${Date.now()}`,
+            role: "system",
+            content: `创建失败: ${data.error || "未知错误"}`,
+          },
         ]);
       }
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
-        { id: `e-${Date.now()}`, role: "system", content: `⚠ 请求失败: ${e.message}` },
+        {
+          id: `e-${Date.now()}`,
+          role: "system",
+          content: `请求失败: ${e.message}`,
+        },
       ]);
     } finally {
       setLoading(false);
@@ -91,69 +101,21 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
   };
 
   return (
-    <div
-      style={{
-        marginTop: 12,
-        border: "1px solid #0f3460",
-        borderRadius: 8,
-        background: "#0f1a2e",
-        display: "flex",
-        flexDirection: "column",
-        maxHeight: 400,
-      }}
-    >
-      {/* 消息列表 */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "8px 12px",
-          minHeight: 100,
-          maxHeight: 280,
-        }}
-      >
+    <div className="mt-3 border border-border rounded-lg bg-surface flex flex-col max-h-[400px]">
+      <div className="flex-1 overflow-y-auto p-2 px-3 min-h-[100px] max-h-[280px]">
         {messages.length === 0 && (
-          <div style={{ color: "#555", fontSize: 12, textAlign: "center", padding: 20 }}>
+          <div className="text-xs text-muted-foreground text-center py-5">
             用自然语言描述你要创建的内容
           </div>
         )}
         {messages.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              marginBottom: 8,
-              padding: "6px 10px",
-              borderRadius: 6,
-              background:
-                m.role === "user"
-                  ? "#0a1e3a"
-                  : m.role === "assistant"
-                  ? "#0a1e1a"
-                  : "#2a0a1a",
-              borderLeft: `3px solid ${
-                m.role === "user" ? "#4a9eff" : m.role === "assistant" ? "#53c0a0" : "#e94560"
-              }`,
-              fontSize: 12,
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {m.content}
-          </div>
+          <ChatMessage key={m.id} role={m.role} content={m.content} />
         ))}
         <div ref={bottomRef} />
       </div>
 
-      {/* 输入区 */}
-      <div
-        style={{
-          display: "flex",
-          gap: 6,
-          padding: "8px 12px",
-          borderTop: "1px solid #0f3460",
-        }}
-      >
-        <input
+      <div className="flex gap-1.5 p-2 px-3 border-t border-border">
+        <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -164,34 +126,16 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
           }}
           placeholder={PROMPT_PLACEHOLDERS[kind] || "描述你要创建的内容..."}
           disabled={loading}
-          style={{
-            flex: 1,
-            background: "#1a1a2e",
-            color: "#e0e0e0",
-            border: "1px solid #0f3460",
-            borderRadius: 4,
-            padding: "6px 10px",
-            fontSize: 13,
-            outline: "none",
-            fontFamily: "inherit",
-          }}
+          className="flex-1 min-w-0 w-auto"
         />
-        <button
+        <Button
           onClick={handleSend}
           disabled={loading || !input.trim()}
-          style={{
-            background: loading ? "#333" : "#e94560",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "6px 14px",
-            fontSize: 13,
-            cursor: loading ? "not-allowed" : "pointer",
-            opacity: loading || !input.trim() ? 0.5 : 1,
-          }}
+          variant={loading ? "secondary" : "primary"}
+          size="sm"
         >
           {loading ? "创建中..." : "创建"}
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -4,6 +4,19 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ATRPG</title>
+    <script>
+      // FOUC 防护：在 React 挂载前应用主题，避免闪烁
+      (function () {
+        var t = localStorage.getItem("atrpg-theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        } else if (t === "system" || !t) {
+          if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+            document.documentElement.setAttribute("data-theme", "dark");
+          }
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

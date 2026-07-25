@@ -1,115 +1,68 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useUserIdentity } from "../hooks/useUserIdentity";
-
-const styles = {
-  container: {
-    fontFamily: "system-ui, sans-serif",
-    background: "#1a1a2e",
-    color: "#e0e0e0",
-    minHeight: "100vh",
-    margin: 0,
-  },
-  header: {
-    background: "#16213e",
-    padding: "10px 20px",
-    borderBottom: "1px solid #0f3460",
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-  },
-  title: {
-    fontSize: 18,
-    color: "#e94560",
-    fontWeight: "bold",
-    cursor: "pointer",
-  } as const,
-  nav: {
-    display: "flex",
-    gap: 12,
-    fontSize: 13,
-    flex: 1,
-  },
-  link: {
-    color: "#8a8a9a",
-    cursor: "pointer",
-    textDecoration: "none",
-    padding: "4px 8px",
-    borderRadius: 4,
-  },
-  activeLink: {
-    color: "#e0e0e0",
-    background: "#0f3460",
-  },
-  userInfo: {
-    fontSize: 12,
-    color: "#8a8a9a",
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-  },
-  adminBadge: {
-    fontSize: 10,
-    background: "#e94560",
-    color: "#fff",
-    padding: "1px 5px",
-    borderRadius: 3,
-  },
-  main: {
-    padding: 0,
-  },
-} as const;
+import type { Permission } from "../store/userStore";
+import { Navigation } from "./ui";
 
 interface LayoutProps {
   children: ReactNode;
 }
+
+const permissionNav: Record<Permission, { key: string; label: string; path: string }[]> = {
+  "玩家": [
+    { key: "home", label: "首页", path: "/" },
+    { key: "player", label: "游戏聊天", path: "/player" },
+  ],
+  "主持人": [
+    { key: "home", label: "首页", path: "/" },
+    { key: "player", label: "游戏聊天", path: "/player" },
+    { key: "editor", label: "编辑器", path: "/editor" },
+  ],
+  "管理员": [
+    { key: "home", label: "首页", path: "/" },
+    { key: "player", label: "游戏聊天", path: "/player" },
+    { key: "editor", label: "编辑器", path: "/editor" },
+    { key: "console", label: "控制台", path: "/console" },
+  ],
+};
+
+const permissionBadge: Record<Permission, { label: string; className: string }> = {
+  "玩家": { label: "玩家", className: "text-[10px] bg-surface-container-high text-fg px-1 py-px rounded-sm" },
+  "主持人": { label: "主持人", className: "text-[10px] bg-primary-container text-primary px-1 py-px rounded-sm" },
+  "管理员": { label: "管理员", className: "text-[10px] bg-primary text-on-primary px-1 py-px rounded-sm" },
+};
 
 export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, loading } = useUserIdentity();
 
-  const isAdmin = user?.is_admin ?? false;
-
-  const navItems = [
-    { label: "首页", path: "/" },
-    { label: "游戏聊天", path: "/player" },
-    ...(isAdmin
-      ? [
-          { label: "编辑器", path: "/editor" },
-          { label: "控制台", path: "/console" },
-        ]
-      : []),
-  ];
+  const permission = user?.permission ?? "玩家";
+  const navItems = permissionNav[permission] || permissionNav["玩家"];
+  const badge = permissionBadge[permission];
 
   return (
-    <div style={styles.container}>
-      <header style={styles.header}>
-        <span style={styles.title} onClick={() => navigate("/")}>
-          ATRPG
-        </span>
-        <nav style={styles.nav}>
-          {navItems.map((item) => (
-            <a
-              key={item.path}
-              style={{
-                ...styles.link,
-                ...(location.pathname === item.path ? styles.activeLink : {}),
-              }}
-              onClick={() => navigate(item.path)}
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        {!loading && user && (
-          <div style={styles.userInfo}>
-            <span>{user.display_name}</span>
-            {isAdmin && <span style={styles.adminBadge}>管理员</span>}
-          </div>
-        )}
-      </header>
-      <main style={styles.main}>{children}</main>
+    <div className="min-h-screen flex flex-col">
+      <Navigation
+        brand="ATRPG"
+        items={navItems.map((item) => ({
+          key: item.key,
+          label: item.label,
+          active: location.pathname === item.path,
+          onClick: () => navigate(item.path),
+        }))}
+        user={
+          !loading && user ? (
+            <>
+              <span className="atrpg-caption text-fg font-mono">
+                {user.id}
+              </span>
+              <span className={badge.className}>{badge.label}</span>
+            </>
+          ) : undefined
+        }
+      />
+      <main className="flex-1 flex flex-col">{children}</main>
     </div>
   );
 }

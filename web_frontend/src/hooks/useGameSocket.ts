@@ -6,7 +6,7 @@ import { useGameStore, ChatMessage } from "../store/gameStore";
 interface UseGameSocketOptions {
   sessionKey?: string;
   provider?: string;
-  openid?: string;
+  userId?: string;
 }
 
 export function useGameSocket(options: UseGameSocketOptions = {}) {
@@ -22,7 +22,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
 
   const sessionKey = options.sessionKey || "";
   const provider = options.provider || "";
-  const openid = options.openid || "";
+  const userId = options.userId || "";
 
   const connect = useCallback(() => {
     if (!sessionKey) return;
@@ -38,15 +38,15 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log(`WS connected: ${sessionKey}`);
+      console.log(`WS connected: ${sessionKey}, identifying as ${provider}:${userId}`);
       connectingRef.current = false;
-      // 发送身份信息
-      ws.send(JSON.stringify({ type: "identify", payload: { provider, openid } }));
+      ws.send(JSON.stringify({ type: "identify", payload: { provider, openid: userId } }));
     };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
+        console.debug(`WS ← ${msg.type}`, msg.payload || "");
         switch (msg.type) {
           case "connected":
             setConnected(true, msg.session_key);
@@ -61,7 +61,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
             addMessage({
               id: `error-${Date.now()}`,
               role: "system",
-              content: `⚠ ${msg.payload.message}`,
+              content: msg.payload.message,
               timestamp: Date.now(),
             });
             break;
@@ -74,17 +74,19 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
       }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (e) => {
+      console.log(`WS closed: ${sessionKey} code=${e.code} reason=${e.reason}`);
       connectingRef.current = false;
       setConnected(false);
       wsRef.current = null;
     };
 
-    ws.onerror = () => {
+    ws.onerror = (e) => {
+      console.error("WS error:", e);
       connectingRef.current = false;
       setConnected(false);
     };
-  }, [sessionKey, provider, openid, setConnected, addMessage, appendLastAssistant]);
+  }, [sessionKey, provider, userId, setConnected, addMessage, appendLastAssistant]);
 
   const disconnect = useCallback(() => {
     connectingRef.current = false;
@@ -100,7 +102,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
         addMessage({
           id: `error-${Date.now()}`,
           role: "system",
-          content: "⚠ 未连接到服务器",
+          content: "未连接到服务器",
           timestamp: Date.now(),
         });
         return;
@@ -119,7 +121,6 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
     [addMessage]
   );
 
-  // 自动连接：当 sessionKey 变为非空时连接，变为空/sessionKey 变化时断开旧连接
   useEffect(() => {
     if (sessionKey) {
       connect();

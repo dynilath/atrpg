@@ -1,3 +1,5 @@
+import { SbItem } from "../../components/ui";
+
 interface SessionsPanelProps {
   sessions: string[];
   selected: string | null;
@@ -13,15 +15,13 @@ export default function SessionsPanel({
 }: SessionsPanelProps) {
   if (error) {
     return (
-      <div style={{ padding: 12, color: "#e94560", fontSize: 12 }}>
-        {error}
-      </div>
+      <div className="p-3 text-error text-xs">{error}</div>
     );
   }
 
   if (sessions.length === 0) {
     return (
-      <div style={{ padding: 40, color: "#555", textAlign: "center", fontSize: 14 }}>
+      <div className="p-10 text-muted-foreground text-center text-sm">
         暂无会话
       </div>
     );
@@ -30,19 +30,12 @@ export default function SessionsPanel({
   return (
     <>
       {sessions.map((sid) => (
-        <div
+        <SbItem
           key={sid}
+          label={sid}
+          active={selected === sid}
           onClick={() => onSelect(sid)}
-          style={{
-            padding: "8px 12px",
-            cursor: "pointer",
-            borderBottom: "1px solid #0f3460",
-            fontSize: 12,
-            background: selected === sid ? "#0f3460" : "transparent",
-          }}
-        >
-          {sid}
-        </div>
+        />
       ))}
     </>
   );

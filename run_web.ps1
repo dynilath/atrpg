@@ -62,16 +62,26 @@ if (-not (Test-Path (Join-Path $frontendDir 'node_modules'))) {
     Pop-Location
 }
 
+# ── 后端日志文件 ──
+$logFile = Join-Path $backendDir 'backend.log'
+if (Test-Path $logFile) {
+    # 保留上次的日志（追加模式），但先打印分隔线
+    Add-Content -Path $logFile -Value ("`n" + "=" * 60)
+    Add-Content -Path $logFile -Value "  $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') — 新会话启动"
+    Add-Content -Path $logFile -Value ("=" * 60 + "`n")
+}
+
 # ── 启动后端 ──
 Write-Host ''
 Write-Host '[ATRPG Web] 启动后端 (127.0.0.1:9090)...' -ForegroundColor Cyan
+Write-Host "  日志文件: $logFile" -ForegroundColor DarkGray
 $env:PYTHONPATH = $PSScriptRoot
 $backendJob = Start-Job -ScriptBlock {
-    param($py, $root)
+    param($py, $root, $log)
     $env:PYTHONPATH = $root
     Set-Location $root
-    & $py -c "import sys; sys.path.insert(0, r'$root\web_api'); sys.path.insert(0, r'$root'); from web_api.main import main; main()"
-} -ArgumentList $python, $PSScriptRoot
+    & $py -c "import sys; sys.path.insert(0, r'$root\web_api'); sys.path.insert(0, r'$root'); from web_api.main import main; main()" *>&1 | Out-File -FilePath $log -Append -Encoding UTF8
+} -ArgumentList $python, $PSScriptRoot, $logFile
 
 # ── 等后端就绪 ──
 Write-Host '  等待后端就绪...'
@@ -79,13 +89,15 @@ $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 500
     try {
-        $null = Invoke-WebRequest -Uri 'http://127.0.0.1:9090/api/sessions' -UseBasicParsing -TimeoutSec 1
+        $conn = New-Object Net.Sockets.TcpClient
+        $conn.Connect('127.0.0.1', 9090)
+        $conn.Close()
         $ready = $true
         break
     } catch {}
     if ($backendJob.State -ne 'Running') {
-        Write-Host '[错误] 后端启动失败' -ForegroundColor Red
-        Receive-Job $backendJob
+        Write-Host '[错误] 后端启动失败，最后 20 行日志:' -ForegroundColor Red
+        Get-Content $logFile -Tail 20
         Read-Host '按回车关闭'
         exit 1
     }
@@ -114,6 +126,9 @@ try {
     Write-Host ''
     Write-Host '[ATRPG Web] 停止后端...' -ForegroundColor Yellow
     Stop-Job $backendJob -ErrorAction SilentlyContinue
+    # 把后台 Job 里还没来得及刷盘的日志收进来
+    Receive-Job $backendJob -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding UTF8
     Remove-Job $backendJob -ErrorAction SilentlyContinue
     Write-Host '[ATRPG Web] 已停止' -ForegroundColor Cyan
+    Write-Host "  后端日志: $logFile" -ForegroundColor DarkGray
 }

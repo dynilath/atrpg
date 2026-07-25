@@ -79,9 +79,12 @@ def _load_system_prefix(s: store.Store, mode: str = "game") -> str:
     return "\n\n".join(parts)
 
 
-def _build_sender_frame(s: store.Store, group_id: str, member_openid: str) -> str:
-    """构造发送人框架：最小必要信息（谁在说话、关联角色、绑定状态）。"""
-    char_slug = s.player_binding(member_openid)
+def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_slug: str | None = None) -> str:
+    """构造发送人框架：最小必要信息（谁在说话、关联角色、绑定状态）。
+    
+    char_slug: Web 端已知的角色 slug（优先级高于 player_binding 查询）。
+    """
+    effective_slug = char_slug or s.player_binding(member_openid)
 
     if char_slug:
         d = s.read("characters", char_slug)
@@ -156,7 +159,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
     # 延迟导入 — dispatch/tool_schemas 在 gm.py 中定义，依赖其 @tool 装饰器
     # 注册的工具表。process_turn 本身不直接引用 NoneBot 类型，但 gm.py 作为
     # NoneBot 插件在加载时已确保工具表填充完毕。
-    from .gm import dispatch, tool_schemas
+    from .tools import dispatch, tool_schemas
 
     s = input.store
     result = TurnResult()
@@ -169,7 +172,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
     system_prefix = _load_system_prefix(s, input.mode)
 
     # ── 发送人框架 ──
-    sender_frame = _build_sender_frame(s, input.group_id, input.member_openid)
+    sender_frame = _build_sender_frame(s, input.group_id, input.member_openid, input.char_slug)
     turn_user = f"{sender_frame}\n\n{input.text}\n</turn>"
 
     # ── 构造本轮 messages ──
@@ -198,6 +201,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
     # ── 工具调用循环（流式：reply 工具被调用时立即发送）──
     schemas = tool_schemas()
+    logger.info(f"准备调用 LLM: model={llm.config().model} messages={len(messages)} tools={len(schemas)}")
     for _ in range(MAX_TOOL_ROUNDS):
         try:
             assistant = await llm.chat_with_tools(messages, schemas)

@@ -13,12 +13,15 @@ from __future__ import annotations
 import os
 import re
 import time
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Store", "StoreError", "slugify"]
 
@@ -202,6 +205,7 @@ class Store:
         content = _dump_doc(meta, body)
         with _FileLock(self.root / ".atrpg" / ".lock"):
             p.write_text(content, encoding="utf-8")
+        logger.debug(f"store write: {kind}/{slug} body={len(body)}chars")
         return p
 
     def append_body(self, kind: str, slug: str, chunk: str) -> None:
@@ -296,6 +300,7 @@ class Store:
             return []
         try:
             msgs = json.loads(cur.read_text(encoding="utf-8"))
+            logger.debug(f"store load_history: {session_key} msgs={len(msgs)}")
         except (json.JSONDecodeError, OSError):
             return []
         return self._clean_messages(msgs)
@@ -375,6 +380,9 @@ class Store:
             # current.json：截断版（供下轮 LLM 续接）
             cur = sdir / "current.json"
             cur.write_text(json.dumps(self._truncate(messages), ensure_ascii=False), encoding="utf-8")
+        logger.debug(
+            f"store save_history: {session_key} turn={turn_no} msgs={len(messages)}"
+        )
 
     def list_sessions(self) -> list[str]:
         """列出所有有历史的 session key。"""

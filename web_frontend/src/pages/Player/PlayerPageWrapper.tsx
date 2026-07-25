@@ -5,15 +5,14 @@ import { useUserIdentity } from "../../hooks/useUserIdentity";
 import PlayerPage from "./PlayerPage";
 
 export default function PlayerPageWrapper() {
-  const { openid, provider, loading, bindCharacter } = useUserIdentity();
+  const { userId, provider, loading, bindCharacter } = useUserIdentity();
 
-  const sessionKey = openid ? `web_player_${openid}` : "";
-  // useGameSocket 会在 sessionKey 非空时自动连接，变化时自动断开旧连接
-  const socket = useGameSocket({ sessionKey, provider, openid });
+  const sessionKey = userId ? `web_player_${userId}` : "";
+  const socket = useGameSocket({ sessionKey, provider, userId });
 
-  if (loading || !openid) {
+  if (loading || !userId) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "calc(100vh - 48px)", color: "#8a8a9a" }}>
+      <div className="flex items-center justify-center h-[calc(100vh-52px)] text-muted-foreground">
         正在连接...
       </div>
     );

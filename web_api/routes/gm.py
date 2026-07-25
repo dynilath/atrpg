@@ -1,10 +1,8 @@
-"""gm.py — /api/gm/* 路由。
-
-主持人对话：调用 process_turn 纯函数，回复通过 WebSocket 或 REST 返回。
-"""
+"""gm.py — /api/gm/* 路由。"""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter
@@ -12,24 +10,12 @@ from fastapi.responses import JSONResponse
 
 from ..deps import get_store
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/gm", tags=["gm"])
 
 
 @router.post("/chat")
 async def gm_chat(body: dict[str, Any]):
-    """主持人直接对话。
-
-    请求体:
-    {
-        "text": "玩家说的话",
-        "session_key": "可选（默认 auto）",
-        "member_openid": "可选（默认 web_user）",
-        "group_id": "可选（默认 web_group）"
-    }
-    返回: { replied, reply_preview, replies: [...], usage, error }
-    """
-    from bot.atrpg_gm.types import TurnInput
-
     text = body.get("text", "").strip()
     if not text:
         return JSONResponse({"error": "text 不能为空"}, status_code=400)
@@ -41,12 +27,16 @@ async def gm_chat(body: dict[str, Any]):
     try:
         s = get_store()
     except Exception as e:
+        logger.exception("GM chat: get_store 失败")
         return JSONResponse({"error": f"Store 未就绪: {e}"}, status_code=500)
 
     collected_replies: list[str] = []
 
     async def _send(content: str) -> None:
         collected_replies.append(content)
+
+    from bot.atrpg_gm.types import TurnInput
+    from bot.atrpg_gm.process_turn import process_turn
 
     input_data = TurnInput(
         store=s,
@@ -56,8 +46,12 @@ async def gm_chat(body: dict[str, Any]):
         text=text,
         send_fn=_send,
     )
-    from bot.atrpg_gm.process_turn import process_turn
+    logger.info(f"GM chat: session={session_key} user={member_openid} text={text[:80]}")
     result = await process_turn(input_data)
+    logger.info(
+        f"GM chat done: replied={result.replied} replies={len(collected_replies)} "
+        f"usage={result.usage} error={result.error!r}"
+    )
 
     return JSONResponse({
         "replied": result.replied,

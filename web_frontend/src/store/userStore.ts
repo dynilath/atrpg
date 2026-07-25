@@ -2,14 +2,15 @@
 
 import { create } from "zustand";
 
+export type Permission = "玩家" | "主持人" | "管理员";
+
 export interface UserInfo {
   provider: string;
-  openid: string;
+  id: string;
   display_name: string;
   character_slug: string | null;
-  permission: string;
+  permission: Permission;
   joined: string;
-  is_admin: boolean;
 }
 
 export interface UserState {

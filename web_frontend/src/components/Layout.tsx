@@ -46,8 +46,9 @@ const styles = {
 
 const navItems = [
   { label: "首页", path: "/" },
+  { label: "玩家", path: "/player" },
+  { label: "编辑器", path: "/editor" },
   { label: "控制台", path: "/console" },
-  { label: "玩家界面", path: "/player" },
 ];
 
 interface LayoutProps {

@@ -53,24 +53,29 @@ class ToolContext:
 # 上下文加载
 # ===========================================================================
 
-def _load_runtime_prompt() -> str:
-    p = Path(__file__).resolve().parent / "gm_runtime.md"
+def _load_runtime_prompt(mode: str = "game") -> str:
+    """加载运行时提示词。mode 决定用 GM 提示词还是编辑助手提示词。"""
+    filename = "editor_runtime.md" if mode == "edit" else "gm_runtime.md"
+    p = Path(__file__).resolve().parent / filename
     return p.read_text(encoding="utf-8")
 
 
-def _load_system_prefix(s: store.Store) -> str:
+def _load_system_prefix(s: store.Store, mode: str = "game") -> str:
     """构造稳定 system 前缀：运行时提示词 + 世界书 + 文风参考。
 
     这几部分每轮不变，作为消息列表首条，让 DeepSeek 等提供商的前缀缓存命中。
+    editor 模式不加世界书（编辑助手不需要常驻世界观知识）。
     """
-    runtime = _load_runtime_prompt()
+    runtime = _load_runtime_prompt(mode)
     parts = [runtime]
-    world = s.read_world_book()
-    if world:
-        parts.append(f"---\n\n# 世界书（常驻世界观知识，你的设定依据）\n\n{world}")
-    style = s.read_style_guide()
-    if style:
-        parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与场景描写时模仿此风格）\n\n{style}")
+    if mode != "edit":
+        # 编辑助手不加载世界书——它面向备团用户，不需要跑团世界观上下文
+        world = s.read_world_book()
+        if world:
+            parts.append(f"---\n\n# 世界书（常驻世界观知识，你的设定依据）\n\n{world}")
+        style = s.read_style_guide()
+        if style:
+            parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与场景描写时模仿此风格）\n\n{style}")
     return "\n\n".join(parts)
 
 
@@ -161,7 +166,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
     history = s.load_history(session_key)
 
     # ── 构造 system 前缀（每轮刷新，世界书可能更新）──
-    system_prefix = _load_system_prefix(s)
+    system_prefix = _load_system_prefix(s, input.mode)
 
     # ── 发送人框架 ──
     sender_frame = _build_sender_frame(s, input.group_id, input.member_openid)

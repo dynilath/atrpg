@@ -12,6 +12,19 @@ from fastapi.responses import JSONResponse
 
 from ..deps import get_store
 
+
+def _json_safe(obj: Any) -> Any:
+    """递归将不可 JSON 序列化的类型转为字符串。"""
+    import datetime
+    if isinstance(obj, (datetime.date, datetime.datetime)):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
 router = APIRouter(prefix="/api/data", tags=["data"])
 
 DATA_KINDS = (
@@ -27,7 +40,7 @@ async def list_docs(kind: str):
         return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
     try:
         s = get_store()
-        return JSONResponse(s.list_docs(kind))
+        return JSONResponse(_json_safe(s.list_docs(kind)))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

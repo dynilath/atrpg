@@ -102,7 +102,9 @@ async def session_ws(websocket: WebSocket, session_key: str):
                 except Exception as e:
                     logging.warning(f"WS send 失败: {e}")
 
-            # mode 区分：chat 用现有 GM 提示词，edit 留给后续实现
+            # mode 区分：chat/edit
+            msg_mode = msg_type  # "chat" → "game", "edit" → "edit"
+            process_mode = "game" if msg_mode == "chat" else "edit"
             member_openid = f"ws_user_{session_key}"
             group_id = session_key
 
@@ -113,6 +115,7 @@ async def session_ws(websocket: WebSocket, session_key: str):
                 group_id=group_id,
                 text=text,
                 send_fn=_send,
+                mode=process_mode,
             )
             result = await process_turn(input_data)
 

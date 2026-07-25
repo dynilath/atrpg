@@ -27,6 +27,7 @@ from .deps import get_config, get_store
 from .routes.sessions import router as sessions_router
 from .routes.data import router as data_router
 from .routes.gm import router as gm_router
+from .routes.editor import router as editor_router
 
 
 def create_app() -> FastAPI:
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(data_router)
     app.include_router(gm_router)
+    app.include_router(editor_router)
 
     # ── 注册 WebSocket 路由 ──
     from .routes.ws import router as ws_router

@@ -36,6 +36,7 @@ class TurnInput:
     group_id: str
     text: str
     send_fn: SendMessage | None = None
+    mode: str = "game"  # "game" | "create_character" | "edit"
 
 
 @dataclass

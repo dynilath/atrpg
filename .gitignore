@@ -6,6 +6,7 @@ __pycache__/
 
 # venv（项目自包含，但不入 git）
 bot/.venv/
+web_api/.venv/
 .venv/
 
 # 配置文件（含密钥 AppSecret/LLM key，勿提交）
@@ -26,3 +27,9 @@ bot/.env
 .vscode/
 .idea/
 *.swp
+
+# npm
+node_modules/
+
+# frontend
+web_frontend/dist/

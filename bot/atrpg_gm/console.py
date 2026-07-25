@@ -4,11 +4,17 @@
 访问 http://127.0.0.1:8080/console/
 
 路由：
-  GET  /console/                              主页（单页 HTML+JS）
-  GET  /console/api/sessions                  列出所有 session
-  GET  /console/api/sessions/{sid}/turns      列出某 session 的轮次摘要
-  GET  /console/api/sessions/{sid}/turns/{n}  某轮完整 messages
-  POST /console/api/sessions/{sid}/rollback/{n}  回滚到某轮
+  GET    /console/                              主页（单页 HTML+JS）
+  GET    /console/api/sessions                  列出所有 session
+  GET    /console/api/sessions/{sid}/turns      列出某 session 的轮次摘要
+  GET    /console/api/sessions/{sid}/usage      总 token 用量
+  GET    /console/api/sessions/{sid}/turns/{n}  某轮完整 messages
+  POST   /console/api/sessions/{sid}/rollback/{n}  回滚到某轮
+  GET    /console/api/data/{kind}               列出某类数据档案摘要
+  GET    /console/api/data/{kind}/{slug}        读取完整档案（meta+body）
+  POST   /console/api/data/{kind}/{slug}        写入/更新档案
+  POST   /console/api/gm/chat                   主持人直接对话
+  WS     /console/api/ws/{session_key}          实时消息流推送
 """
 
 from __future__ import annotations
@@ -85,6 +91,138 @@ def setup_console() -> None:
             return JSONResponse({"ok": True, "rolled_back_to": turn_no})
         except Exception as e:  # noqa: BLE001
             return JSONResponse({"error": str(e)}, status_code=500)
+
+    # === 数据档案 CRUD ===
+
+    DATA_VIEW_KINDS = ("characters", "npcs", "locations", "scenes", "items", "story-arcs", "state-records", "sessions", "players")
+
+    @app.get("/console/api/data/{kind}")
+    async def api_data_list(kind: str):
+        if kind not in DATA_VIEW_KINDS:
+            return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
+        try:
+            s = get_store()
+            return JSONResponse(s.list_docs(kind))
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/console/api/data/{kind}/{slug}")
+    async def api_data_read(kind: str, slug: str):
+        if kind not in DATA_VIEW_KINDS:
+            return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
+        try:
+            s = get_store()
+            d = s.read(kind, slug)
+            if d is None:
+                return JSONResponse({"error": "不存在"}, status_code=404)
+            meta, body = d
+            return JSONResponse({"meta": meta, "body": body})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/console/api/data/{kind}/{slug}")
+    async def api_data_write(kind: str, slug: str, body: dict[str, Any]):
+        """写入/更新档案。body 应为 {"meta": {...}, "body": "..."}"""
+        if kind not in DATA_VIEW_KINDS:
+            return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
+        try:
+            s = get_store()
+            meta = body.get("meta", {})
+            content = body.get("body", "")
+            p = s.write(kind, slug, meta, content)
+            logger.info(f"控制台写入: {kind}/{slug}.md")
+            return JSONResponse({"ok": True, "path": str(p)})
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # === GM 直接对话 ===
+
+    @app.post("/console/api/gm/chat")
+    async def api_gm_chat(body: dict[str, Any]):
+        """主持人直接对话（不经 QQ，控制台内与 LLM 对话）。
+
+        请求体：
+        {
+            "text": "玩家说的话",
+            "session_key": "可选的会话 key（默认 console_<id>）",
+            "member_openid": "可选的发送人 ID",
+            "group_id": "可选的群 ID"
+        }
+        返回：TurnResult（含 replied / reply_preview / usage 等）
+        """
+        from .types import TurnInput
+
+        text = body.get("text", "").strip()
+        if not text:
+            return JSONResponse({"error": "text 不能为空"}, status_code=400)
+
+        session_key = body.get("session_key", f"console_{id(body)}")
+        member_openid = body.get("member_openid", "console_user")
+        group_id = body.get("group_id", session_key)
+
+        try:
+            s = get_store()
+        except Exception as e:
+            return JSONResponse({"error": f"Store 未就绪: {e}"}, status_code=500)
+
+        # 收集发送的回复文本
+        collected_replies: list[str] = []
+
+        async def _send(content: str) -> None:
+            collected_replies.append(content)
+
+        input_data = TurnInput(
+            store=s,
+            session_key=session_key,
+            member_openid=member_openid,
+            group_id=group_id,
+            text=text,
+            send_fn=_send,
+        )
+        from .process_turn import process_turn
+        result = await process_turn(input_data)
+
+        return JSONResponse({
+            "replied": result.replied,
+            "reply_preview": result.reply_preview,
+            "replies": collected_replies,
+            "usage": result.usage,
+            "error": result.error,
+        })
+
+    # === WebSocket 实时消息流 ===
+
+    @app.websocket("/console/api/ws/{session_key}")
+    async def api_ws(websocket: Any, session_key: str):
+        """WebSocket 端点：建立连接后推送该 session 的实时消息流。
+
+        当前仅做连接管理（供未来 QQ 消息实时推送使用），
+        客户端可在此观察 QQ 消息进入处理的过程。
+        """
+        import asyncio
+        try:
+            await websocket.accept()
+            await websocket.send_json({"type": "connected", "session_key": session_key})
+            # 保持连接（将来可推送实时处理进度）
+            while True:
+                try:
+                    data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+                    # 客户端可发送 ping 保持连接
+                    if data == "ping":
+                        await websocket.send_json({"type": "pong"})
+                except asyncio.TimeoutError:
+                    # 发心跳保活
+                    try:
+                        await websocket.send_json({"type": "heartbeat"})
+                    except Exception:
+                        break
+        except Exception as e:
+            logger.debug(f"WebSocket 断开: {session_key} — {e}")
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     logger.success("控制台已挂载: http://127.0.0.1:8080/console/")
 

@@ -2,11 +2,17 @@
 
 吃一个符合 agent.md 规划的目录，提供统一的读写接口。
 启动时校验：至少 1 条主要弧光 + 若干场景/地点，否则拒绝开团。
+
+线程/进程安全：Store 使用基于文件创建原子性的跨平台文件锁
+（.atrpg/.lock），保护 write/append_body/save_history 等写操作。
+多进程（如 NoneBot QQ + 独立 Web API 并行）可安全共享 data/ 目录。
 """
 
 from __future__ import annotations
 
+import os
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -76,6 +82,59 @@ class Session:
         }
 
 
+class _FileLock:
+    """跨平台文件锁，基于文件创建原子性（O_CREAT | O_EXCL）。
+
+    用于保护 store 的写操作，使多进程（QQ + Web API 并行）安全共享 data/ 目录。
+    不依赖 msvcrt/fcntl，纯 Python 标准库实现。
+
+    超时后抛出 TimeoutError，由调用方决定是否重试或报错。
+    """
+
+    def __init__(self, lock_path: str | Path, timeout: float = 10.0, poll_interval: float = 0.05):
+        self.lock_path = str(lock_path)
+        self.timeout = timeout
+        self.poll_interval = poll_interval
+        self._fd: int | None = None
+
+    def acquire(self) -> None:
+        start = time.monotonic()
+        while True:
+            try:
+                self._fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                # 写入当前 PID，便于调试死锁
+                os.write(self._fd, str(os.getpid()).encode())
+                return
+            except FileExistsError:
+                if time.monotonic() - start > self.timeout:
+                    # 尝试读取锁文件中的 PID
+                    pid_info = ""
+                    try:
+                        pid_info = f" (持有者 PID 可能为：{Path(self.lock_path).read_text().strip()})"
+                    except OSError:
+                        pass
+                    raise TimeoutError(
+                        f"无法获取文件锁（超时 {self.timeout}s）{pid_info}"
+                    )
+                time.sleep(self.poll_interval)
+
+    def release(self) -> None:
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+            try:
+                os.remove(self.lock_path)
+            except OSError:
+                pass
+
+    def __enter__(self) -> _FileLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.release()
+
+
 class Store:
     """TRPG 上下文目录的读写门面。"""
 
@@ -140,16 +199,19 @@ class Store:
         meta.setdefault("slug", slug)
         meta.setdefault("updated", datetime.now().strftime("%Y-%m-%d %H:%M"))
         p = self._path(kind, slug)
-        p.write_text(_dump_doc(meta, body), encoding="utf-8")
+        content = _dump_doc(meta, body)
+        with _FileLock(self.root / ".atrpg" / ".lock"):
+            p.write_text(content, encoding="utf-8")
         return p
 
     def append_body(self, kind: str, slug: str, chunk: str) -> None:
         """向文档正文末尾追加内容（不改 meta）。文件不存在则创建。"""
         p = self._path(kind, slug)
         if p.exists():
-            _, body = _parse_doc(p.read_text(encoding="utf-8"))
-            body = body.rstrip() + "\n\n" + chunk + "\n"
-            p.write_text(_dump_doc({}, body), encoding="utf-8")
+            with _FileLock(self.root / ".atrpg" / ".lock"):
+                _, body = _parse_doc(p.read_text(encoding="utf-8"))
+                body = body.rstrip() + "\n\n" + chunk + "\n"
+                p.write_text(_dump_doc({}, body), encoding="utf-8")
         else:
             self.write(kind, slug, {}, chunk)
 
@@ -306,13 +368,13 @@ class Store:
             "usage": (meta or {}).get("usage", {}),
             "messages": messages,
         }
-        (snap_dir / f"turn-{turn_no:03d}.json").write_text(
-            json.dumps(snap, ensure_ascii=False), encoding="utf-8"
-        )
-
-        # current.json：截断版（供下轮 LLM 续接）
-        cur = sdir / "current.json"
-        cur.write_text(json.dumps(self._truncate(messages), ensure_ascii=False), encoding="utf-8")
+        with _FileLock(self.root / ".atrpg" / ".lock"):
+            (snap_dir / f"turn-{turn_no:03d}.json").write_text(
+                json.dumps(snap, ensure_ascii=False), encoding="utf-8"
+            )
+            # current.json：截断版（供下轮 LLM 续接）
+            cur = sdir / "current.json"
+            cur.write_text(json.dumps(self._truncate(messages), ensure_ascii=False), encoding="utf-8")
 
     def list_sessions(self) -> list[str]:
         """列出所有有历史的 session key。"""
@@ -386,16 +448,17 @@ class Store:
             d = json.loads(target.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return False
-        # 删除之后的快照
-        for p in sorted(snap_dir.glob("turn-*.json")):
-            name = p.stem  # turn-NNN
-            n = int(name.split("-")[1])
-            if n > turn_no:
-                p.unlink()
-        # 把该轮 messages（截断版）写回 current.json
-        (sdir / "current.json").write_text(
-            json.dumps(self._truncate(d["messages"]), ensure_ascii=False), encoding="utf-8"
-        )
+        with _FileLock(self.root / ".atrpg" / ".lock"):
+            # 删除之后的快照
+            for p in sorted(snap_dir.glob("turn-*.json")):
+                name = p.stem  # turn-NNN
+                n = int(name.split("-")[1])
+                if n > turn_no:
+                    p.unlink()
+            # 把该轮 messages（截断版）写回 current.json
+            (sdir / "current.json").write_text(
+                json.dumps(self._truncate(d["messages"]), ensure_ascii=False), encoding="utf-8"
+            )
         return True
 
     # ---------- 位置追踪 ----------

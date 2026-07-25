@@ -1,21 +1,19 @@
-"""gm.py — 主持人核心调度。
+"""gm.py — 主持人工具注册表 + QQ 入口。
 
-收到 QQ 群 @bot 消息后，按「加载上下文 → 工具调用循环 → 分块回群」处理。
-所有判断交给 LLM 主持人（见 gm_runtime.md），Python 只负责：
-  1. 把玩家文本 + 游戏上下文喂给 LLM；
-  2. 把 store/arc 的接口包装成工具，供 LLM 通过 tool call 表达落盘意图；
-  3. 执行工具调用，把结果回灌给 LLM，直到它收尾（调用 reply 并无更多工具）；
-  4. 把收集到的回复文本分块发回群里。
+职责：
+  1. 定义 14 个工具并通过 @tool 注册到 _REGISTRY
+  2. 提供 dispatch / tool_schemas 供 process_turn 调用
+  3. 提供 QQ matcher 入口，将事件转发给 process_turn 纯函数
 
 不搞命令分发器：只有一个 matcher 入口，所有玩家文本自由进入。
+核心调度逻辑已提取到 process_turn.py，此处只做 QQ 适配层。
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from nonebot import get_driver, logger, on_message
@@ -24,39 +22,8 @@ from nonebot.matcher import Matcher
 from nonebot.rule import is_type
 
 from . import arc, llm, store
-
-# 单条消息最长字数（QQ 官方群文本上限约 2000，留余量按 1900 分块）。
-CHUNK_SIZE = 1900
-# 工具调用循环最大轮数，防止模型失控无限调工具。
-MAX_TOOL_ROUNDS = 6
-
-
-# ---------------------------------------------------------------------------
-# 工具上下文
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ToolContext:
-    """单次消息处理内的可变状态与外部依赖。
-
-    每个 @bot 消息新建一个。工具实现通过它访问 store / 群信息 / 发送回调。
-    角色卡草案不再存内存——直接落盘到 data/characters/（状态:待确认），跨消息持久化。
-    """
-
-    store: store.Store
-    member_openid: str
-    group_id: str
-    # 玩家本轮发送的原始文本
-    raw_text: str
-    # 发送回调：reply 工具调用时立即发群（流式回复），不等循环结束。
-    # 由 handler 注入（包装 matcher.send）。
-    send_fn: Callable[[str], Awaitable[None]] | None = None
-    # 标记本轮是否已通过 reply 发过内容（用于判断兜底）
-    replied: bool = False
-    # 本轮 reply 内容预览（供快照 meta 记录，控制台展示）
-    reply_preview: str = ""
-    # 本轮累计 token 用量（最后一次 LLM 调用的 usage）
-    last_usage: dict[str, int] = field(default_factory=dict)
+from .process_turn import ToolContext, _split_chunks
+from .types import TurnInput
 
 
 # ---------------------------------------------------------------------------
@@ -731,73 +698,6 @@ def _remove_attendee(s: store.Store, scene_slug: str, char_slug: str) -> None:
     s.write("scenes", scene_slug, meta, body)
 
 
-# ===========================================================================
-# 上下文加载
-# ===========================================================================
-
-def _load_runtime_prompt() -> str:
-    p = Path(__file__).resolve().parent / "gm_runtime.md"
-    return p.read_text(encoding="utf-8")
-
-
-def _load_system_prefix(s: store.Store) -> str:
-    """构造稳定 system 前缀：运行时提示词 + 世界书 + 文风参考。
-
-    这几部分每轮不变，作为消息列表首条，让 DeepSeek 等提供商的前缀缓存命中。
-    """
-    runtime = _load_runtime_prompt()
-    parts = [runtime]
-    world = s.read_world_book()
-    if world:
-        parts.append(f"---\n\n# 世界书（常驻世界观知识，你的设定依据）\n\n{world}")
-    style = s.read_style_guide()
-    if style:
-        parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与场景描写时模仿此风格）\n\n{style}")
-    return "\n\n".join(parts)
-
-
-def _build_sender_frame(s: store.Store, group_id: str, member_openid: str) -> str:
-    """构造发送人框架：最小必要信息（谁在说话、关联角色、绑定状态）。
-
-    精简设计——不塞场景描写/弧光详情，那些由 LLM 用 query_locations/query_memory 按需查。
-    这样 user 消息短且稳定，历史续接干净，前缀缓存效率高。
-    """
-    char_slug = s.player_binding(member_openid)
-
-    if char_slug:
-        # 已绑定：带角色名 + 当前场景名（一行，不展开描写）
-        d = s.read("characters", char_slug)
-        char_name = d[0].get("姓名", char_slug) if d else char_slug
-        char_identity = d[0].get("身份", "") if d else ""
-        scene_slug = s.char_scene(group_id, char_slug)
-        scene_name = ""
-        if scene_slug:
-            sd = s.read("scenes", scene_slug)
-            scene_name = sd[0].get("名称", scene_slug) if sd else scene_slug
-        loc = f" | 当前场景: {scene_name}" if scene_name else ""
-        ident = f"（{char_identity}）" if char_identity else ""
-        return f'<turn sender="{char_name}" char="{char_slug}"{loc}>\n状态: 已绑定角色{ident}'
-    else:
-        # 未绑定：检查是否有待确认草案
-        pending = _find_pending_char(s, member_openid)
-        if pending:
-            pd = s.read("characters", pending)
-            pname = pd[0].get("姓名", pending) if pd else pending
-            return (
-                f'<turn sender="未绑定玩家" pending_char="{pending}">\n'
-                f'状态: 有待确认角色卡「{pname}」，若玩家确认则 finalize_character'
-            )
-        return '<turn sender="未绑定玩家">\n状态: 尚未绑定角色，若为概括叙述则走角色创建'
-
-
-def _find_pending_char(s: store.Store, member_openid: str) -> str | None:
-    """查找某玩家的待确认角色草案 slug（扫 characters/ 状态为待确认且 owner 匹配）。"""
-    for d in s.list_docs("characters"):
-        if d["meta"].get("状态") == "待确认" and d["meta"].get("owner_openid") == member_openid:
-            return d["slug"]
-    return None
-
-
 def get_store() -> store.Store:
     """从 NoneBot 配置读取游戏目录，构造 Store（启动时已校验）。"""
     game_dir = get_driver().config.atrpg_game_dir
@@ -834,9 +734,9 @@ async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreat
     text = event.get_plaintext().strip()
 
     if not text:
-        return  # 空消息不处理
+        return
 
-    # 私聊需 c2c_test_mode 开关开启才处理（用于验证；正式跑团应关）
+    # 私聊需 c2c_test_mode 开关开启才处理
     if is_c2c and not getattr(get_driver().config, "atrpg_c2c_test_mode", False):
         return
 
@@ -846,145 +746,40 @@ async def handle_group_at(bot: Bot, matcher: Matcher, event: GroupAtMessageCreat
         await matcher.send(f"⚠ 游戏目录未就绪：{e}")
         return
 
-    # 仅群@消息做目标群过滤；私聊不过滤（测试模式下一对一验证）
+    # 仅群@消息做目标群过滤
     if not is_c2c:
         target_group = str(getattr(get_driver().config, "atrpg_target_group", "")).strip()
         if target_group and group_id != target_group:
-            return  # 非目标群，忽略
+            return
 
     logger.info(f"GM 处理: {'c2c' if is_c2c else 'group'}={group_id} member={member_openid} text={text[:40]!r}")
 
-    # 流式回复：reply 工具被调用时立即发群，不等循环结束。
-    # 包装 matcher.send 为 send_fn 注入 ToolContext。
-    # 捕获 QQ 去重错误（ActionFailed code=40054005）：不冒泡给 LLM，否则 LLM 会误以为
-    # 没发成功而重试 reply，形成无效循环。去重说明 QQ 已收到或拦截，视为已发送。
+    # 构造 send_fn：QQ 版包装 matcher.send，拆分为 1900 字分块
     async def _send(content: str) -> None:
         import asyncio
         chunks = _split_chunks([content])
         for i, chunk in enumerate(chunks):
             if i > 0:
-                await asyncio.sleep(0.5)  # 连续分块间小延迟，避免触发 QQ 去重
+                await asyncio.sleep(0.5)
             try:
                 await matcher.send(chunk)
             except Exception as e:
-                # QQ 去重(40054005)等发送失败：记录但不冒泡，避免 LLM 重试循环
                 logger.warning(f"发送消息到群失败（可能去重）：{e}")
 
-    ctx = ToolContext(
-        store=s, member_openid=member_openid, group_id=group_id,
-        raw_text=text, send_fn=_send,
+    # 调用纯函数 process_turn
+    from .process_turn import process_turn
+
+    input_data = TurnInput(
+        store=s,
+        session_key=group_id,
+        member_openid=member_openid,
+        group_id=group_id,
+        text=text,
+        send_fn=_send,
     )
-
-    # ---- 对话历史续接 ----
-    # 稳定前缀（gm_runtime + 世界书）作为首条 system；动态局势作为 user 消息每轮更新。
-    # 历史从 .atrpg/history/<session>.json 加载，本轮工具循环的消息追加进历史，结束后保存。
-    # 这样：1) 不每轮重传全部上下文（复用历史）；2) 稳定前缀不变，命中 DeepSeek 前缀缓存。
-    session_key = group_id
-    history = s.load_history(session_key)
-
-    # 每轮刷新稳定前缀（世界书可能更新）
-    system_prefix = _load_system_prefix(s)
-    # 发送人框架：精简（角色名/场景名一行），详情由 LLM 用 query_locations/query_memory 按需查
-    sender_frame = _build_sender_frame(s, group_id, member_openid)
-    turn_user = f"{sender_frame}\n\n{text}\n</turn>"
-
-    # 构造本轮 messages：新 system 前缀（首条）+ 历史（去掉旧 system）+ 本轮 user
-    # 显式过滤历史里的 system 消息（用新前缀替代），不依赖位置
-    history_body = [m for m in history if m.get("role") != "system"]
-    if history_body:
-        messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user}]
-    else:
-        # 首次对话：给 LLM 一句引导，告知可用工具查详情
-        messages = [
-            {"role": "system", "content": system_prefix},
-            {"role": "user", "content": turn_user + "\n\n（首次对话。如需了解当前场景/在场者/已有弧光，用 query_locations / query_memory 工具查询。处理完毕用 reply 收尾。）"},
-        ]
-
-    # 工具调用循环（流式：reply 工具被调用时立即发群）
-    schemas = tool_schemas()
-    for _ in range(MAX_TOOL_ROUNDS):
-        try:
-            assistant = await llm.chat_with_tools(messages, schemas)
-        except Exception as e:  # noqa: BLE001 — LLM 调用失败要给玩家兜底
-            logger.opt(exception=e).error("LLM 调用失败")
-            if not ctx.replied:
-                await matcher.send("⚠ 主持人暂时无法响应，请稍后再试。")
-            break
-
-        # 输出 token 用量与缓存命中（累加本轮所有 LLM 调用）
-        u = assistant.usage
-        if u:
-            ctx.last_usage = {
-                "prompt_tokens": ctx.last_usage.get("prompt_tokens", 0) + u.get("prompt_tokens", 0),
-                "completion_tokens": ctx.last_usage.get("completion_tokens", 0) + u.get("completion_tokens", 0),
-                "cached_tokens": ctx.last_usage.get("cached_tokens", 0) + u.get("cached_tokens", 0),
-            }
-            logger.info(
-                f"LLM 用量(本轮累计): prompt={ctx.last_usage['prompt_tokens']} "
-                f"cached={ctx.last_usage['cached_tokens']}/{ctx.last_usage['prompt_tokens']} "
-                f"completion={ctx.last_usage['completion_tokens']}"
-            )
-
-        # 把助手这步加入消息历史
-        messages.append(llm.assistant_to_message(assistant))
-
-        if not assistant.has_tool_calls:
-            # 模型收尾（未调工具）。
-            if assistant.content.strip():
-                if not ctx.replied:
-                    # 本轮还没 reply 过，把收尾文本作为回复发出
-                    await _send(assistant.content)
-                    ctx.replied = True
-                else:
-                    # 已 reply 过却还有残留文本——LLM 违规，丢弃避免重复消息
-                    logger.warning(f"LLM reply 后又生成残留文本，已丢弃：{assistant.content[:80]!r}")
-            break
-
-        # 执行工具调用（reply 会立即发群，落盘工具在后台继续）
-        for call in assistant.tool_calls:
-            result = await dispatch(ctx, call)
-            messages.append(llm.tool_result_message(call.id, result))
-        # 循环上限兜底：给模型继续的机会
-    else:
-        # 触达 MAX_TOOL_ROUNDS 仍未收尾
-        if not ctx.replied:
-            await matcher.send("（主持人处理超时，本轮已中断。请重试。）")
-        logger.warning("工具调用循环达到上限，强制收尾")
-
-    # 保存对话历史（含本轮所有新增消息 + 元信息快照）
-    # meta 供控制台展示与回滚定位
-    from datetime import datetime as _dt
-    # 从 sender_frame 提取发送人名（<turn sender="xxx" ...>）
-    sender_name = ""
-    _sf = sender_frame
-    if 'sender="' in _sf:
-        sender_name = _sf.split('sender="', 1)[1].split('"', 1)[0]
-    meta = {
-        "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "sender": sender_name,
-        "player_text": text[:120],
-        "reply_preview": ctx.reply_preview,
-        "usage": ctx.last_usage,
-    }
-    s.save_history(session_key, messages, meta=meta)
+    result = await process_turn(input_data)
 
     # 兜底：如果整个循环没产生任何回复
-    if not ctx.replied:
-        await matcher.send("（主持人已处理，但没有产生回复内容。）")
-
-
-def _split_chunks(replies: list[str]) -> list[str]:
-    """把多条回复合并后按 CHUNK_SIZE 切分。"""
-    if not any(r and r.strip() for r in replies):
-        return []
-    out: list[str] = []
-    for r in replies:
-        r = r.strip()
-        if not r:
-            continue
-        while len(r) > CHUNK_SIZE:
-            out.append(r[:CHUNK_SIZE])
-            r = r[CHUNK_SIZE:]
-        if r:
-            out.append(r)
-    return out
+    if not result.replied:
+        msg = result.error or "（主持人已处理，但没有产生回复内容。）"
+        await matcher.send(msg)

@@ -4,14 +4,19 @@
 - chat(system, user)：一次性文本对话，无工具。
 - chat_with_tools(messages, tools)：单步工具调用循环。返回助手消息（可能含
   tool_calls），由调用方决定是否继续循环。gm.py 用它编排「主持人演绎 + 落盘」。
+
+配置加载：
+- 优先通过 NoneBot 的 get_driver().config 读取（QQ Bot 模式）。
+- 回退从 config.toml 直接读取（独立 web_api 模式）。
 """
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
-from nonebot import get_driver
 from openai import AsyncOpenAI
 
 _client: AsyncOpenAI | None = None
@@ -26,15 +31,38 @@ class LLMConfig:
 
 
 def config() -> LLMConfig:
-    # 从 NoneBot 配置读取。config.toml 由 run.py 拍平后通过 nonebot.init(**kwargs)
-    # 注入（init kwargs 优先级最高），落入 driver.config 的小写属性。
-    cfg = get_driver().config
-    return LLMConfig(
-        base_url=cfg.atrpg_llm_base_url,
-        api_key=cfg.atrpg_llm_api_key,
-        model=getattr(cfg, "atrpg_llm_model", "glm-4-plus"),
-        utility_model=getattr(cfg, "atrpg_llm_utility_model", "glm-4-flash"),
-    )
+    # 优先从 NoneBot 配置读取（QQ Bot 模式）
+    try:
+        from nonebot import get_driver
+        cfg = get_driver().config
+        return LLMConfig(
+            base_url=cfg.atrpg_llm_base_url,
+            api_key=cfg.atrpg_llm_api_key,
+            model=getattr(cfg, "atrpg_llm_model", "glm-4-plus"),
+            utility_model=getattr(cfg, "atrpg_llm_utility_model", "glm-4-flash"),
+        )
+    except (ValueError, AttributeError, ImportError):
+        pass
+
+    # 回退：从 config.toml 直接读取（独立 web_api 模式）
+    return _config_from_toml()
+
+
+def _config_from_toml() -> LLMConfig:
+    """从 config.toml 读取 LLM 配置（NoneBot 不可用时回退）。"""
+    for d in [Path.cwd(), Path.cwd().parent, Path.cwd() / "bot"]:
+        p = d / "config.toml"
+        if p.exists():
+            raw = p.read_text(encoding="utf-8")
+            cfg = tomllib.loads(raw)
+            atrpg = cfg.get("atrpg", {})
+            return LLMConfig(
+                base_url=atrpg.get("llm_base_url", ""),
+                api_key=atrpg.get("llm_api_key", ""),
+                model=atrpg.get("llm_model", "glm-4-plus"),
+                utility_model=atrpg.get("llm_utility_model", "glm-4-flash"),
+            )
+    raise RuntimeError("找不到 config.toml，无法获取 LLM 配置")
 
 
 def client() -> AsyncOpenAI:

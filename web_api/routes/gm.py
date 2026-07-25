@@ -34,7 +34,7 @@ async def gm_chat(body: dict[str, Any]):
     if not text:
         return JSONResponse({"error": "text 不能为空"}, status_code=400)
 
-    session_key = body.get("session_key", f"web_{id(body)}")
+    session_key = body.get("session_key", "web_single")
     member_openid = body.get("member_openid", "web_user")
     group_id = body.get("group_id", session_key)
 

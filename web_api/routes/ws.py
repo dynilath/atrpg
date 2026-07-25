@@ -1,11 +1,25 @@
 """ws.py — /ws/* WebSocket 路由。
 
-实时消息推送：主持人回复流式到达、QQ 消息实时观察等。
+实时消息推送：主持人回复流式到达（reply_chunk）。
+协议（JSON）：
+  客户端 → 服务端：
+    { "type": "chat", "payload": { "text": "..." } }
+    { "type": "edit", "payload": { "text": "..." } }
+    "ping"
+
+  服务端 → 客户端：
+    { "type": "connected", "session_key": "..." }
+    { "type": "reply_chunk", "payload": { "text": "..." } }
+    { "type": "reply_done", "payload": { "usage": {...}, "replied": true } }
+    { "type": "error", "payload": { "message": "..." } }
+    { "type": "pong" }
+    { "type": "heartbeat" }
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -15,12 +29,11 @@ router = APIRouter(prefix="/ws", tags=["websocket"])
 
 @router.websocket("/{session_key}")
 async def session_ws(websocket: WebSocket, session_key: str):
-    """WebSocket 端点：建立连接后保持心跳，供前端实时接收推送。
+    """WebSocket 端点：实时对话协议。"""
+    from bot.atrpg_gm.types import TurnInput
+    from bot.atrpg_gm.process_turn import process_turn
+    from ..deps import get_store
 
-    客户端可发送 "ping" 保活（服务端回复 "pong"）。
-    服务端每 30 秒发一次 "heartbeat" 检查连接状态。
-    当前为连接管理骨架，后续添加消息推送。
-    """
     await websocket.accept()
     await websocket.send_json({"type": "connected", "session_key": session_key})
     logging.info(f"WebSocket 已连接: {session_key}")
@@ -28,15 +41,91 @@ async def session_ws(websocket: WebSocket, session_key: str):
     try:
         while True:
             try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=30)
-                if data == "ping":
-                    await websocket.send_json({"type": "pong"})
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=30)
             except asyncio.TimeoutError:
-                # 发心跳保活
                 try:
                     await websocket.send_json({"type": "heartbeat"})
                 except Exception:
                     break
+                continue
+
+            # 心跳
+            if raw == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
+            # JSON 消息
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({
+                    "type": "error",
+                    "payload": {"message": "无效 JSON"},
+                })
+                continue
+
+            msg_type = msg.get("type", "")
+            payload = msg.get("payload", {})
+            text = (payload.get("text") or "").strip()
+
+            if msg_type not in ("chat", "edit"):
+                await websocket.send_json({
+                    "type": "error",
+                    "payload": {"message": f"未知消息类型: {msg_type}"},
+                })
+                continue
+
+            if not text:
+                await websocket.send_json({
+                    "type": "error",
+                    "payload": {"message": "text 不能为空"},
+                })
+                continue
+
+            # ── 处理 chat / edit ──
+            try:
+                store = get_store()
+            except Exception as e:
+                await websocket.send_json({
+                    "type": "error",
+                    "payload": {"message": f"Store 未就绪: {e}"},
+                })
+                continue
+
+            # send_fn：流式推送 reply_chunk
+            async def _send(content: str) -> None:
+                try:
+                    await websocket.send_json({
+                        "type": "reply_chunk",
+                        "payload": {"text": content},
+                    })
+                except Exception as e:
+                    logging.warning(f"WS send 失败: {e}")
+
+            # mode 区分：chat 用现有 GM 提示词，edit 留给后续实现
+            member_openid = f"ws_user_{session_key}"
+            group_id = session_key
+
+            input_data = TurnInput(
+                store=store,
+                session_key=session_key,
+                member_openid=member_openid,
+                group_id=group_id,
+                text=text,
+                send_fn=_send,
+            )
+            result = await process_turn(input_data)
+
+            await websocket.send_json({
+                "type": "reply_done",
+                "payload": {
+                    "replied": result.replied,
+                    "reply_preview": result.reply_preview,
+                    "usage": result.usage,
+                    "error": result.error,
+                },
+            })
+
     except WebSocketDisconnect:
         logging.debug(f"WebSocket 断开: {session_key}")
     except Exception as e:

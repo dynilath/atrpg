@@ -126,27 +126,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    web_cfg = cfg.web
-
-    logging.basicConfig(
-        level=getattr(logging, web_cfg.log_level.upper(), logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(message)s",
-    )
-
-    app = create_app()
-    logging.info(f"启动 Web API: http://{web_cfg.host}:{web_cfg.port}")
-    if web_cfg.dev_mode:
-        logging.info(f"  前端 Vite 代理: {web_cfg.vite_url}")
-    logging.info(f"  API: http://{web_cfg.host}:{web_cfg.port}/api/")
-    logging.info(f"  WS:  ws://{web_cfg.host}:{web_cfg.port}/ws/")
-
-    uvicorn.run(
-        app,
-        host=web_cfg.host,
-        port=web_cfg.port,
-        log_level=web_cfg.log_level.lower(),
-    )
-
-
-if __name__ == "__main__":
-    main()

@@ -10,15 +10,16 @@ send_fn 由调用方注入——QQ 版包装 matcher.send，Web 版包装 WebSoc
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from nonebot import logger
-
 from . import arc, llm, store
 from .types import TurnInput, TurnResult
+
+logger = logging.getLogger(__name__)
 
 
 # 单条消息最长字数（QQ 官方群文本上限约 2000，留余量按 1900 分块）。
@@ -196,7 +197,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
         try:
             assistant = await llm.chat_with_tools(messages, schemas)
         except Exception as e:
-            logger.opt(exception=e).error("LLM 调用失败")
+            logger.exception("LLM 调用失败")
             if not ctx.replied:
                 result.error = "LLM 调用失败"
             break

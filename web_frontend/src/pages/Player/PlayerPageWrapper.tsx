@@ -7,8 +7,7 @@ import PlayerPage from "./PlayerPage";
 export default function PlayerPageWrapper() {
   const { userId, provider, loading, bindCharacter } = useUserIdentity();
 
-  const sessionKey = userId ? `web_player_${userId}` : "";
-  const socket = useGameSocket({ sessionKey, provider, userId });
+  const socket = useGameSocket({ provider, userId });
 
   if (loading || !userId) {
     return (

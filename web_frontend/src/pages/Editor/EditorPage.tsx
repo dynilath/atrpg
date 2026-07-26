@@ -1,7 +1,9 @@
 /** 备团编辑器主页面。 */
 
 import { useState, useCallback, useEffect } from "react";
-import { Sidebar, SbTabs, SbTab, SbList, SbItem, Button } from "../../components/ui";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { Sidebar, SbTabs, SbTab, SbList, Button } from "../../components/ui";
 import EditorChat from "./EditorChat";
 
 type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations";
@@ -56,6 +58,31 @@ export default function EditorPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showChat, setShowChat] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [editMeta, setEditMeta] = useState<Record<string, string> | null>(null);
+  const [editBody, setEditBody] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = useCallback(async () => {
+    if (!selectedSlug || !editMeta) return;
+    setSaving(true);
+    try {
+      const dataKind = DATA_API[activeTab];
+      const r = await fetch(`/api/data/${dataKind}/${selectedSlug}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meta: editMeta, body: editBody }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setSelectedMeta(editMeta);
+      setSelectedBody(editBody);
+      setShowEdit(false);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }, [selectedSlug, editMeta, editBody, activeTab]);
 
   const loadList = useCallback(async (kind: ResourceKind) => {
     setLoading(true);
@@ -83,6 +110,7 @@ export default function EditorPage() {
     setSelectedSlug(slug);
     setSelectedBody("");
     setSelectedMeta(null);
+    setShowEdit(false);
     try {
       const dataKind = DATA_API[kind];
       const r = await fetch(`/api/data/${dataKind}/${slug}`);
@@ -94,6 +122,14 @@ export default function EditorPage() {
       setError(e.message);
     }
   }, []);
+
+  const enterEdit = useCallback(() => {
+    if (selectedMeta) {
+      setEditMeta({ ...selectedMeta });
+      setEditBody(selectedBody);
+      setShowEdit(true);
+    }
+  }, [selectedMeta, selectedBody]);
 
   useEffect(() => {
     loadList(activeTab);
@@ -129,76 +165,208 @@ export default function EditorPage() {
             </div>
           )}
           {resources.map((doc) => {
-            const name = doc.meta?.名称 || doc.meta?.姓名 || doc.meta?.标题 || doc.slug;
-            const extra = doc.meta?.级别 || doc.meta?.身份 || "";
+            const name = doc.meta?.name || doc.meta?.名称 || doc.meta?.姓名 || doc.meta?.标题 || doc.slug;
+            const desc = doc.meta?.brief || doc.meta?.级别 || doc.meta?.身份 || "";
+            const isPerson = activeTab === "characters" || activeTab === "npcs";
+
             return (
-              <SbItem
+              <div
                 key={doc.slug}
-                label={name}
-                sub={extra || undefined}
-                active={selectedSlug === doc.slug}
+                className={`px-3 py-2 cursor-pointer transition-[filter] duration-150 hover:brightness-[.97] ${
+                  selectedSlug === doc.slug
+                    ? "bg-primary-container text-primary"
+                    : "text-fg"
+                }`}
                 onClick={() => loadDetail(activeTab, doc.slug)}
-              />
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") loadDetail(activeTab, doc.slug);
+                }}
+              >
+                {isPerson ? (
+                  <>
+                    <div className="text-sm font-medium">{name}</div>
+                    {desc && (
+                      <div className="text-caption text-muted-foreground text-right mt-0.5">
+                        {desc}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex justify-between items-baseline gap-2">
+                    <span className="text-sm font-medium min-w-0 break-all">{name}</span>
+                    {desc && (
+                      <span className="text-caption text-muted-foreground shrink-0">{desc}</span>
+                    )}
+                  </div>
+                )}
+              </div>
             );
           })}
         </SbList>
+
+        {/* AI 辅助创建按钮 — 侧边栏底部 */}
+        <div className="border-t border-border p-3">
+          <Button
+            variant="primary"
+            onClick={() => setShowChat(true)}
+            className="w-full"
+          >
+            创建{KIND_LABELS[activeTab]}
+          </Button>
+        </div>
       </Sidebar>
 
-      {/* 右侧：详情 + AI 聊天 */}
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col">
+      {/* 右侧：详情 */}
+      <div className="flex-1 overflow-y-auto flex flex-col">
         {selectedMeta ? (
           <>
-            <div className="mb-3">
-              <h2 className="text-primary text-h4 mb-2">
-                {selectedMeta?.名称 || selectedMeta?.姓名 || selectedSlug}
-              </h2>
-              <div className="flex flex-wrap gap-1">
-                {Object.entries(selectedMeta)
-                  .filter(
-                    ([k]) =>
-                      !["名称", "姓名", "slug", "updated", "body"].includes(k)
-                  )
-                  .map(([k, v]) => (
-                    <span
-                      key={k}
-                      className="inline-block bg-primary-container text-muted-foreground rounded-sm px-1.5 py-0.5 text-[11px]"
-                    >
-                      {k}: {String(v).substring(0, 40)}
-                    </span>
-                  ))}
-              </div>
+            {/* Toolbar */}
+            <div className="flex items-center justify-between px-4 py-2 border-b border-border">
+              <span className="text-sm text-muted-foreground font-mono">
+                {selectedSlug}
+              </span>
+              {showEdit ? (
+                <div className="flex gap-2">
+                  <Button size="sm" className="h-10" onClick={handleSave} disabled={saving}>
+                    {saving ? "保存中..." : "保存"}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-10" onClick={() => setShowEdit(false)}>
+                    取消
+                  </Button>
+                </div>
+              ) : (
+                <Button size="sm" className="h-10" onClick={enterEdit}>
+                  编辑
+                </Button>
+              )}
             </div>
-            <pre className="flex-1 bg-bg border border-border text-fg p-3 rounded-md text-xs leading-relaxed overflow-auto whitespace-pre-wrap break-words">
-              {selectedBody || "(无正文)"}
-            </pre>
+
+            <div className="p-4 flex-1 overflow-y-auto">
+              {showEdit ? (
+                /* 编辑模式 */
+                <div className="space-y-3 mb-4">
+                  <EditRow label="名称" value={editMeta?.name || editMeta?.名称 || editMeta?.姓名 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, name: v }))} />
+                  <EditRow label="类型" value={editMeta?.type || editMeta?.类型 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, type: v }))} />
+                  <EditRow label="简介" value={editMeta?.brief || editMeta?.身份 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
+                  <EditRow label="性质" value={editMeta?.nature || editMeta?.性质 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, nature: v }))} />
+                  <div className="flex gap-3">
+                    <span className="text-muted-foreground text-sm shrink-0 mt-2">正文：</span>
+                    <textarea
+                      className="flex-1 min-h-[300px] bg-bg border border-border rounded-md p-3 text-sm font-mono text-fg resize-y"
+                      value={editBody}
+                      onChange={(e) => setEditBody(e.target.value)}
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* 预览模式 */
+                <>
+                  <div className="mb-4 space-y-3">
+                    <MetaRow label="名称" value={selectedMeta.name || selectedMeta.名称 || selectedMeta.姓名 || selectedSlug || ""} />
+                    <MetaRow label="类型" value={selectedMeta.type || selectedMeta.类型 || ""} />
+                    <MetaRow label="简介" value={selectedMeta.brief || selectedMeta.身份 || ""} />
+                    <MetaRow label="性质" value={selectedMeta.nature || selectedMeta.性质 || ""} />
+                  </div>
+
+                  {selectedMeta.custom_info && typeof selectedMeta.custom_info === "object" && (
+                    <details className="mb-4" open>
+                      <summary className="text-sm text-muted-foreground cursor-pointer hover:text-fg">
+                        自定义信息
+                      </summary>
+                      <div className="mt-2 space-y-2 pl-2 border-l-2 border-border">
+                        {Object.entries(selectedMeta.custom_info as Record<string, string>).map(([k, v]) => (
+                          <MetaRow key={k} label={k} value={String(v)} />
+                        ))}
+                      </div>
+                    </details>
+                  )}
+
+                  <div className="prose prose-sm max-w-none text-fg
+                    [&_h1]:text-xl [&_h1]:font-bold [&_h1]:mt-8 [&_h1]:mb-4 [&_h1]:border-b [&_h1]:border-border [&_h1]:pb-2
+                    [&_h2]:text-lg [&_h2]:font-bold [&_h2]:mt-6 [&_h2]:mb-3
+                    [&_h3]:text-base [&_h3]:font-bold [&_h3]:mt-4 [&_h3]:mb-2
+                    [&_h4]:text-sm [&_h4]:font-bold [&_h4]:mt-3 [&_h4]:mb-1
+                    [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-2
+                    [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-2
+                    [&_li]:my-0.5
+                    [&_table]:w-full [&_table]:border-collapse [&_table]:my-3
+                    [&_th]:border [&_th]:border-border [&_th]:bg-surface-dim [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:text-sm [&_th]:font-semibold
+                    [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_td]:text-sm
+                    [&_tbody>tr:nth-child(even)]:bg-surface-dim/30
+                    [&_p]:my-2 [&_p]:leading-relaxed
+                    [&_code]:bg-surface-dim [&_code]:px-1 [&_code]:rounded
+                    [&_pre]:bg-surface-dim [&_pre]:p-3 [&_pre]:rounded-md [&_pre]:overflow-x-auto [&_pre]:my-3
+                    [&_blockquote]:border-l-[3px] [&_blockquote]:border-primary [&_blockquote]:pl-3 [&_blockquote]:text-muted-foreground [&_blockquote]:my-3
+                    [&_hr]:border-border [&_hr]:my-6
+                    [&_a]:text-primary [&_strong]:font-bold [&_em]:italic
+                  ">
+                    <Markdown remarkPlugins={[remarkGfm]}>{selectedBody || "（无正文）"}</Markdown>
+                  </div>
+                </>
+              )}
+            </div>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">
-            <p className="mb-4">
-              选择一个{KIND_LABELS[activeTab]}查看详情，或通过 AI 创建新素材
-            </p>
+            <p>选择一个{KIND_LABELS[activeTab]}查看详情</p>
           </div>
         )}
 
-        <Button
-          variant="primary"
-          onClick={() => setShowChat(!showChat)}
-          className="mt-3"
-        >
-          {showChat ? "关闭 AI 助手" : `AI 辅助创建${KIND_LABELS[activeTab]}`}
-        </Button>
-
+        {/* AI 助手浮层 */}
         {showChat && (
-          <EditorChat
-            kind={activeTab}
-            onCreated={(slug) => {
-              loadList(activeTab);
-              setSelectedSlug(slug);
-              loadDetail(activeTab, slug);
-            }}
-          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+            <div className="bg-surface border border-border rounded-xl shadow-modal w-full max-w-lg max-h-[80vh] flex flex-col">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+                <h2 className="font-heading text-h4 font-heading text-fg">
+                  AI 辅助创建{KIND_LABELS[activeTab]}
+                </h2>
+                <button
+                  onClick={() => setShowChat(false)}
+                  className="text-muted-foreground hover:text-fg text-lg leading-none px-1"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                <EditorChat
+                  kind={activeTab}
+                  onCreated={(slug) => {
+                    loadList(activeTab);
+                    setSelectedSlug(slug);
+                    loadDetail(activeTab, slug);
+                  }}
+                />
+              </div>
+            </div>
+          </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 详情行：label + value */
+function MetaRow({ label, value }: { label: string; value: string }) {
+  if (!value) return null;
+  return (
+    <div className="flex gap-3 text-sm">
+      <span className="text-muted-foreground shrink-0">{label}：</span>
+      <span className="text-fg min-w-0 break-all">{value}</span>
+    </div>
+  );
+}
+
+function EditRow({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="flex gap-3 items-center text-sm">
+      <span className="text-muted-foreground shrink-0">{label}：</span>
+      <input
+        className="flex-1 bg-bg border border-border rounded px-3 py-1.5 text-fg outline-none focus:border-primary"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

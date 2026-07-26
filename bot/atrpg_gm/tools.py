@@ -89,7 +89,7 @@ async def reply(ctx: ToolContext, content: str) -> str:
             await ctx.send_fn(chunk)
     ctx.replied = True
     ctx.reply_preview = content[:120]
-    return "已发送给玩家。"
+    return f"已发送（{len(content)}字）"
 
 
 # --- 角色与场景工具 ---------------------------------------------------------

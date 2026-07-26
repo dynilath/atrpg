@@ -1,20 +1,22 @@
-"""ws.py — /ws/* WebSocket 路由。
+"""ws.py — /ws WebSocket 路由。
 
-实时消息推送：主持人回复流式到达（reply_chunk）。
-协议（JSON）：
-  客户端 → 服务端：
-    { "type": "chat", "payload": { "text": "..." } }
-    { "type": "edit", "payload": { "text": "..." } }
-    { "type": "identify", "payload": { "provider": "web"|"qq", "openid": "..." } }
+端点: ws://host/ws?uid={userId}
+同一游戏目录下所有连接共享聊天室，uid 区分用户身份。
+
+协议：
+  客户端 → 服务端:
+    {"type":"identify","payload":{"provider":"web","openid":"..."}}
+    {"type":"chat","payload":{"text":"..."}}
     "ping"
 
-  服务端 → 客户端：
-    { "type": "connected", "session_key": "..." }
-    { "type": "reply_chunk", "payload": { "text": "..." } }
-    { "type": "reply_done", "payload": { "usage": {...}, "replied": true } }
-    { "type": "error", "payload": { "message": "..." } }
-    { "type": "pong" }
-    { "type": "heartbeat" }
+  服务端 → 客户端:
+    {"type":"connected"}
+    {"type":"chat_history","payload":{"messages":[...]}}
+    {"type":"chat_msg","payload":{"id":...,"ts":"...","sender":"...","text":"...","source":"..."}}
+    {"type":"reply_chunk","payload":{"text":"..."}}
+    {"type":"reply_done","payload":{"replied":true,"usage":{...},"error":""}}
+    {"type":"error","payload":{"message":"..."}}
+    "pong"
 """
 
 from __future__ import annotations
@@ -22,11 +24,32 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+
+router = APIRouter(prefix="/ws", tags=["websocket"])
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/ws", tags=["websocket"])
+
+# 所有活跃 WebSocket 连接: uid → list[WebSocket]
+_active_connections: dict[str, list[WebSocket]] = {}
+
+
+async def _broadcast(msg: dict) -> None:
+    """向所有连接广播一条消息。"""
+    dead: list[tuple[str, WebSocket]] = []
+    for uid, socks in _active_connections.items():
+        for ws in socks:
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                dead.append((uid, ws))
+    for uid, ws in dead:
+        try:
+            _active_connections.get(uid, []).remove(ws)
+        except ValueError:
+            pass
 
 
 def _read_user_char_slug(provider: str, openid: str) -> str | None:
@@ -45,21 +68,37 @@ def _read_user_char_slug(provider: str, openid: str) -> str | None:
         return None
 
 
-@router.websocket("/{session_key}")
-async def session_ws(websocket: WebSocket, session_key: str):
-    """WebSocket 端点：实时对话协议。"""
-    from bot.atrpg_gm.types import TurnInput
-    from bot.atrpg_gm.process_turn import process_turn
-    from ..deps import get_store
+@router.websocket("")
+async def session_ws(websocket: WebSocket, uid: str = Query("")):
+    """WebSocket 端点：游戏聊天室。"""
+    from pathlib import Path
+    from ..deps import get_config, get_store
+    from bot.atrpg_gm import db as _db
 
     await websocket.accept()
-    await websocket.send_json({"type": "connected", "session_key": session_key})
-    logger.info(f"WebSocket 已连接: {session_key}")
+    await websocket.send_json({"type": "connected"})
+    logger.info(f"WS 连接: uid={uid}")
 
-    # 用户身份（由客户端 identify 消息设置）
+    # 注册连接
+    if uid not in _active_connections:
+        _active_connections[uid] = []
+    _active_connections[uid].append(websocket)
+
+    # 用户身份
     user_provider: str = ""
     user_openid: str = ""
     user_char_slug: str | None = None
+    user_display_name: str = f"玩家_{uid[:8]}"
+
+    # 推送最近聊天历史
+    try:
+        cfg = get_config()
+        root = Path(cfg.game_dir)
+        history = _db.chat_recent(root, limit=50)
+        if history:
+            await websocket.send_json({"type": "chat_history", "payload": {"messages": history}})
+    except Exception:
+        logger.warning("加载聊天历史失败", exc_info=True)
 
     try:
         while True:
@@ -72,117 +111,154 @@ async def session_ws(websocket: WebSocket, session_key: str):
                     break
                 continue
 
-            # 心跳
             if raw == "ping":
                 await websocket.send_json({"type": "pong"})
                 continue
 
-            # JSON 消息
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
-                await websocket.send_json({
-                    "type": "error",
-                    "payload": {"message": "无效 JSON"},
-                })
+                await websocket.send_json({"type": "error", "payload": {"message": "无效 JSON"}})
                 continue
 
             msg_type = msg.get("type", "")
             payload = msg.get("payload", {})
 
-            # 身份识别
+            # ── identify ──
             if msg_type == "identify":
                 user_provider = (payload.get("provider") or "").strip()
                 user_openid = (payload.get("id") or payload.get("openid") or "").strip()
                 if user_provider and user_openid:
                     user_char_slug = _read_user_char_slug(user_provider, user_openid)
-                    logger.info(
-                        f"WS identify: {user_provider}:{user_openid} char={user_char_slug}"
-                    )
+                    # 读 display_name
+                    try:
+                        cfg2 = get_config()
+                        p = Path(cfg2.game_dir) / ".atrpg" / "users" / user_provider / f"{user_openid}.json"
+                        if p.exists():
+                            ud = json.loads(p.read_text(encoding="utf-8"))
+                            user_display_name = ud.get("display_name", user_display_name)
+                    except Exception:
+                        pass
+                    logger.info(f"WS identify: {user_provider}:{user_openid} char={user_char_slug}")
+                continue
+
+            # ── chat ──
+            if msg_type != "chat":
+                await websocket.send_json({"type": "error", "payload": {"message": f"未知消息类型: {msg_type}"}})
                 continue
 
             text = (payload.get("text") or "").strip()
-
-            if msg_type not in ("chat", "edit"):
-                await websocket.send_json({
-                    "type": "error",
-                    "payload": {"message": f"未知消息类型: {msg_type}"},
-                })
-                continue
-
             if not text:
-                await websocket.send_json({
-                    "type": "error",
-                    "payload": {"message": "text 不能为空"},
-                })
                 continue
 
-            # ── 处理 chat / edit ──
+            # 写聊天室
             try:
-                store = get_store()
+                cfg2 = get_config()
+                root = Path(cfg2.game_dir)
+                chat_msg = _db.chat_append(root, user_display_name, text, source="web")
+                # 广播给所有连接
+                await _broadcast({"type": "chat_msg", "payload": chat_msg})
             except Exception as e:
-                await websocket.send_json({
-                    "type": "error",
-                    "payload": {"message": f"Store 未就绪: {e}"},
-                })
+                logger.exception("聊天室写入失败")
+                await websocket.send_json({"type": "error", "payload": {"message": f"聊天室写入失败: {e}"}})
                 continue
 
-            # send_fn：流式推送 reply_chunk
-            async def _send(content: str) -> None:
-                try:
-                    await websocket.send_json({
-                        "type": "reply_chunk",
-                        "payload": {"text": content},
-                    })
-                except Exception as e:
-                    logger.warning(f"WS send 失败: {e}")
+            # ── 触发 LLM ──
+            try:
+                s = get_store()
+            except Exception as e:
+                await websocket.send_json({"type": "error", "payload": {"message": f"Store 未就绪: {e}"}})
+                continue
 
-            # mode 区分：chat/edit
-            msg_mode = msg_type  # "chat" → "game", "edit" → "edit"
-            process_mode = "game" if msg_mode == "chat" else "edit"
-            member_openid = (
-                f"{user_provider}:{user_openid}"
-                if user_provider and user_openid
-                else f"ws_user_{session_key}"
-            )
+            from bot.atrpg_gm.types import TurnInput
+            from bot.atrpg_gm.process_turn import process_turn
+
+            session_key = "main"
+            member_openid = f"{user_provider}:{user_openid}" if user_provider and user_openid else f"ws:{uid}"
             group_id = session_key
 
-            logger.info(
-                f"WS msg: session={session_key} mode={process_mode} "
-                f"char={user_char_slug} text={text[:60]}"
-            )
+            # send_fn: 流式推送给发送者
+            async def _send(content: str) -> None:
+                # 发给该 uid 下所有活跃连接（用 _broadcast 发 chat_msg 不准确，因为 sender 不同）
+                dead: list[WebSocket] = []
+                for ws in _active_connections.get(uid, []):
+                    try:
+                        await ws.send_json({"type": "reply_chunk", "payload": {"text": content}})
+                    except Exception:
+                        dead.append(ws)
+                for ws in dead:
+                    try:
+                        _active_connections.get(uid, []).remove(ws)
+                    except ValueError:
+                        pass
+
+            logger.info(f"WS chat: uid={uid} char={user_char_slug} text={text[:60]}")
 
             input_data = TurnInput(
-                store=store,
+                store=s,
                 session_key=session_key,
                 member_openid=member_openid,
                 group_id=group_id,
                 text=text,
                 send_fn=_send,
-                mode=process_mode,
+                mode="game",
                 char_slug=user_char_slug,
             )
             result = await process_turn(input_data)
-            logger.info(
-                f"WS done: replied={result.replied} error={result.error!r} "
-                f"usage={result.usage}"
-            )
 
-            await websocket.send_json({
-                "type": "reply_done",
-                "payload": {
-                    "replied": result.replied,
-                    "reply_preview": result.reply_preview,
-                    "usage": result.usage,
-                    "error": result.error,
-                },
-            })
+            # 写 AI 回复到聊天室并广播
+            if result.replied and result.reply_preview:
+                try:
+                    bot_msg = _db.chat_append(root, "主持人", result.reply_preview, source="bot")
+                    await _broadcast({"type": "chat_msg", "payload": bot_msg})
+                except Exception:
+                    logger.warning("Bot 回复写入聊天室失败", exc_info=True)
+
+            # 保存 LLM 会话快照
+            try:
+                if result.messages:
+                    _db.session_save_turn(
+                        root,
+                        result.messages,
+                        meta={
+                            "timestamp": __import__("datetime").datetime.now().isoformat(),
+                            "sender": user_display_name,
+                            "player_text": text[:120],
+                            "reply_preview": result.reply_preview,
+                            "usage": result.usage,
+                        },
+                    )
+            except Exception:
+                logger.warning("会话快照保存失败", exc_info=True)
+
+            # 通知所有同 uid 连接
+            for ws in _active_connections.get(uid, []):
+                try:
+                    await ws.send_json({
+                        "type": "reply_done",
+                        "payload": {
+                            "replied": result.replied,
+                            "reply_preview": result.reply_preview,
+                            "usage": result.usage,
+                            "error": result.error,
+                        },
+                    })
+                except Exception:
+                    pass
+            logger.info(f"WS done: replied={result.replied} error={result.error!r}")
 
     except WebSocketDisconnect:
-        logger.info(f"WS 断开: {session_key}")
+        logger.info(f"WS 断开: uid={uid}")
     except Exception:
-        logger.exception(f"WS 异常: {session_key}")
+        logger.exception(f"WS 异常: uid={uid}")
     finally:
+        # 注销连接
+        try:
+            _active_connections.get(uid, []).remove(websocket)
+            if not _active_connections.get(uid):
+                del _active_connections[uid]
+        except (ValueError, KeyError):
+            pass
         try:
             await websocket.close()
         except Exception:

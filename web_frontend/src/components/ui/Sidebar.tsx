@@ -52,7 +52,7 @@ export function SbItem({
 }) {
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-base whitespace-nowrap min-w-0 overflow-hidden text-ellipsis transition-[filter] duration-150 hover:brightness-[.97] ${
+      className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-base min-w-0 transition-[filter] duration-150 hover:brightness-[.97] ${
         active ? "bg-primary-container text-primary" : "text-fg"
       }`}
       onClick={onClick}
@@ -62,8 +62,8 @@ export function SbItem({
         if (e.key === "Enter") onClick?.();
       }}
     >
-      <span className="min-w-0 overflow-hidden text-ellipsis">{label}</span>
-      {sub && <span className="text-caption text-muted-foreground ml-auto shrink-0">{sub}</span>}
+      <span className="min-w-0 break-all">{label}</span>
+      {sub && <span className="text-caption text-muted-foreground shrink-0">{sub}</span>}
     </div>
   );
 }
@@ -91,7 +91,7 @@ export function SbDetail({
 
 /* ── Tabs ── */
 export function SbTabs({ children }: { children: ReactNode }) {
-  return <div className="flex border-b border-border px-2">{children}</div>;
+  return <div className="flex flex-wrap border-b border-border px-2">{children}</div>;
 }
 
 export function SbTab({

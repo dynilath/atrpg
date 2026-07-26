@@ -101,8 +101,8 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
   };
 
   return (
-    <div className="mt-3 border border-border rounded-lg bg-surface flex flex-col max-h-[400px]">
-      <div className="flex-1 overflow-y-auto p-2 px-3 min-h-[100px] max-h-[280px]">
+    <div className="flex flex-col max-h-[60vh]">
+      <div className="flex-1 overflow-y-auto p-2 px-3 min-h-[100px]">
         {messages.length === 0 && (
           <div className="text-xs text-muted-foreground text-center py-5">
             用自然语言描述你要创建的内容

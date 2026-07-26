@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useUserStore } from "../../store/userStore";
-import { Card } from "../../components/ui";
+import { Card, Tooltip } from "../../components/ui";
 
 interface CharData {
   name: string;
@@ -10,37 +10,31 @@ interface CharData {
   scene_slug: string | null;
 }
 
-export default function CharacterCard() {
+interface CharacterCardProps {
+  onUnbind?: () => void;
+}
+
+export default function CharacterCard({ onUnbind }: CharacterCardProps) {
   const charSlug = useUserStore((s) => s.user?.character_slug ?? null);
   const [char, setChar] = useState<CharData | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!charSlug) {
-      setChar(null);
-      return;
-    }
+    if (!charSlug) { setChar(null); return; }
     let cancelled = false;
     setLoading(true);
     fetch(`/api/data/characters/${charSlug}`)
-      .then((r) => {
-        if (!r.ok) throw new Error("not found");
-        return r.json();
-      })
+      .then((r) => { if (!r.ok) throw new Error("not found"); return r.json(); })
       .then((data) => {
         if (cancelled) return;
         setChar({
-          name: data.meta?.姓名 || data.meta?.名称 || charSlug,
-          identity: data.meta?.身份 || "",
+          name: data.meta?.name || data.meta?.姓名 || data.meta?.名称 || charSlug,
+          identity: data.meta?.brief || data.meta?.身份 || "",
           scene_slug: data.meta?.当前场景 || null,
         });
       })
-      .catch(() => {
-        if (!cancelled) setChar(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch(() => { if (!cancelled) setChar(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [charSlug]);
 
@@ -49,13 +43,25 @@ export default function CharacterCard() {
   }
 
   if (!char) {
-    return null; // 由 PlayerPage 外层处理"无角色"状态
+    return null;
   }
 
   return (
     <div className="p-2">
-      <Card variant="flat">
-        <div className="text-primary font-bold text-sm mb-1">{char.name}</div>
+      <Card variant="flat" className="overflow-visible">
+        <div className="flex items-start justify-between">
+          <div className="text-primary font-bold text-sm">{char.name}</div>
+          {onUnbind && (
+            <Tooltip text="解除绑定">
+              <button
+                onClick={onUnbind}
+                className="text-muted-foreground hover:text-error text-sm leading-none ml-2 shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+              >
+                ✕
+              </button>
+            </Tooltip>
+          )}
+        </div>
         <div className="text-muted-foreground text-caption mb-1">{char.identity}</div>
         <div className="text-[11px] opacity-70">
           {char.scene_slug ? `当前: ${char.scene_slug}` : "位置未知"}

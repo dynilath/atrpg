@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef } from "react";
 import { useGameStore, ChatMessage } from "../store/gameStore";
 
 interface UseGameSocketOptions {
-  sessionKey?: string;
   provider?: string;
   userId?: string;
 }
@@ -20,12 +19,11 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
     clearMessages,
   } = useGameStore();
 
-  const sessionKey = options.sessionKey || "";
   const provider = options.provider || "";
   const userId = options.userId || "";
 
   const connect = useCallback(() => {
-    if (!sessionKey) return;
+    if (!userId) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
     if (wsRef.current?.readyState === WebSocket.CONNECTING) return;
     if (connectingRef.current) return;
@@ -33,12 +31,12 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
     connectingRef.current = true;
 
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${location.host}/ws/${sessionKey}`;
+    const url = `${protocol}//${location.host}/ws?uid=${encodeURIComponent(userId)}`;
     const ws = new WebSocket(url);
     wsRef.current = ws;
 
     ws.onopen = () => {
-      console.log(`WS connected: ${sessionKey}, identifying as ${provider}:${userId}`);
+      console.log(`WS connected: uid=${userId}, identifying as ${provider}:${userId}`);
       connectingRef.current = false;
       ws.send(JSON.stringify({ type: "identify", payload: { provider, openid: userId } }));
     };
@@ -75,7 +73,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
     };
 
     ws.onclose = (e) => {
-      console.log(`WS closed: ${sessionKey} code=${e.code} reason=${e.reason}`);
+      console.log(`WS closed: uid=${userId} code=${e.code} reason=${e.reason}`);
       connectingRef.current = false;
       setConnected(false);
       wsRef.current = null;
@@ -86,7 +84,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
       connectingRef.current = false;
       setConnected(false);
     };
-  }, [sessionKey, provider, userId, setConnected, addMessage, appendLastAssistant]);
+  }, [userId, provider, setConnected, addMessage, appendLastAssistant]);
 
   const disconnect = useCallback(() => {
     connectingRef.current = false;
@@ -122,13 +120,9 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
   );
 
   useEffect(() => {
-    if (sessionKey) {
-      connect();
-    }
-    return () => {
-      disconnect();
-    };
-  }, [sessionKey, connect, disconnect]);
+    if (userId) { connect(); }
+    return () => { disconnect(); };
+  }, [userId, connect, disconnect]);
 
   return {
     connected,
@@ -136,6 +130,5 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
     disconnect,
     sendChat,
     clearMessages,
-    sessionKey,
   };
 }

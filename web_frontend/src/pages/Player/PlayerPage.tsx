@@ -24,7 +24,6 @@ interface CharacterOption {
 
 export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
   const connected = useGameStore((s) => s.connected);
-  const sessionKey = useGameStore((s) => s.sessionKey);
   const user = useUserStore((s) => s.user);
 
   const [characters, setCharacters] = useState<CharacterOption[]>([]);
@@ -47,8 +46,8 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
         const chars: CharacterOption[] = list.map(
           (c: { slug: string; meta: Record<string, unknown> }) => ({
             slug: c.slug,
-            name: c.meta["姓名"] || c.meta["名称"] || c.slug,
-            identity: c.meta["身份"] || "",
+            name: c.meta["name"] || c.meta["姓名"] || c.meta["名称"] || c.slug,
+            identity: c.meta["brief"] || c.meta["身份"] || "",
           })
         );
         setCharacters(chars);
@@ -85,7 +84,7 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
           <span
             className={`w-2 h-2 rounded-full inline-block ${connected ? "bg-success" : "bg-error"}`}
           />
-          {connected ? `已连接: ${sessionKey}` : "未连接"}
+          {connected ? "已连接" : "未连接"}
         </div>
         <ChatWindow />
         <ActionInput socket={socket} />
@@ -95,35 +94,23 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
       <Sidebar>
         <SbSection title="角色">
           {hasChar ? (
-            <>
-              <CharacterCard />
-              <div className="px-2 mt-2">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={handleUnbind}
-                  className="w-full text-error border border-error"
-                >
-                  解除绑定
-                </Button>
-              </div>
-            </>
+            <CharacterCard onUnbind={handleUnbind} />
           ) : (
             <div className="flex flex-col gap-2 px-2">
               <Button onClick={() => setShowCreateDialog(true)}>
                 创建角色
               </Button>
 
-              <div className="text-[11px] text-muted-foreground text-center pt-1">
+              <div className="text-sm text-muted-foreground text-center py-1">
                 或
               </div>
 
               {loadingChars ? (
                 <div className="text-xs text-muted-foreground text-center">加载中...</div>
               ) : characters.length > 0 ? (
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 items-center">
                   <select
-                    className="flex-1 px-2 py-1.5 text-xs bg-bg text-fg border border-border rounded-sm min-w-0"
+                    className="flex-1 px-2 py-2 text-sm bg-bg text-fg border border-border rounded-sm min-w-0"
                     value={selectedChar}
                     onChange={(e) => setSelectedChar(e.target.value)}
                   >
@@ -134,9 +121,13 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
                       </option>
                     ))}
                   </select>
-                  <Button size="sm" onClick={handleBind} disabled={!selectedChar}>
+                  <button
+                    onClick={handleBind}
+                    disabled={!selectedChar}
+                    className="px-3 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-45 disabled:cursor-not-allowed shrink-0"
+                  >
                     绑定
-                  </Button>
+                  </button>
                 </div>
               ) : (
                 <div className="text-xs text-muted-foreground text-center">

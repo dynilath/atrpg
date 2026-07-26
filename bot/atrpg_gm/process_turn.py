@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # 单条消息最长字数（QQ 官方群文本上限约 2000，留余量按 1900 分块）。
 CHUNK_SIZE = 1900
 # 工具调用循环最大轮数，防止模型失控无限调工具。
-MAX_TOOL_ROUNDS = 6
+MAX_TOOL_ROUNDS = 20
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +260,6 @@ async def process_turn(input: TurnInput) -> TurnResult:
         "reply_preview": ctx.reply_preview,
         "usage": ctx.last_usage,
     }
-
-    # ── 保存历史 ──
-    s.save_history(session_key, messages, meta=meta)
 
     # ── 填充结果 ──
     result.replied = ctx.replied

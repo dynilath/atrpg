@@ -52,7 +52,7 @@ export default function ActionInput({ socket }: ActionInputProps) {
         placeholder={connected ? "描述你的行动、对话或提问..." : "正在连接服务器..."}
         disabled={!connected}
         rows={rows}
-        className="leading-[1.5] min-h-9 max-h-40"
+        className="leading-[1.5] min-h-9 max-h-40 py-2"
       />
       <Button
         onClick={handleSend}

@@ -16,20 +16,20 @@ const permissionNav: Record<Permission, { key: string; label: string; path: stri
   "主持人": [
     { key: "home", label: "首页", path: "/" },
     { key: "player", label: "游戏聊天", path: "/player" },
-    { key: "editor", label: "编辑器", path: "/editor" },
+    { key: "editor", label: "故事编辑器", path: "/editor" },
   ],
   "管理员": [
     { key: "home", label: "首页", path: "/" },
     { key: "player", label: "游戏聊天", path: "/player" },
-    { key: "editor", label: "编辑器", path: "/editor" },
+    { key: "editor", label: "故事编辑器", path: "/editor" },
     { key: "console", label: "控制台", path: "/console" },
   ],
 };
 
 const permissionBadge: Record<Permission, { label: string; className: string }> = {
-  "玩家": { label: "玩家", className: "text-[10px] bg-surface-container-high text-fg px-1 py-px rounded-sm" },
-  "主持人": { label: "主持人", className: "text-[10px] bg-primary-container text-primary px-1 py-px rounded-sm" },
-  "管理员": { label: "管理员", className: "text-[10px] bg-primary text-on-primary px-1 py-px rounded-sm" },
+  "玩家": { label: "玩家", className: "text-xs bg-surface-container-high text-fg px-1.5 py-0.5 rounded-sm" },
+  "主持人": { label: "主持人", className: "text-xs bg-primary-container text-primary px-1.5 py-0.5 rounded-sm" },
+  "管理员": { label: "管理员", className: "text-xs bg-primary text-on-primary px-1.5 py-0.5 rounded-sm" },
 };
 
 export default function Layout({ children }: LayoutProps) {

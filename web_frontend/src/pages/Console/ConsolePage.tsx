@@ -1,41 +1,94 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../../api/client";
-import { Sidebar, SbSection, SbList } from "../../components/ui";
-import SessionsPanel from "./SessionsPanel";
-import TurnsPanel from "./TurnsPanel";
+import { Sidebar, SbSection } from "../../components/ui";
+import TurnListPanel from "./TurnListPanel";
+import TurnDetailPanel from "./TurnDetailPanel";
+import ConfigPanel from "./ConfigPanel";
+
+interface TurnSummary {
+  id: string;
+  turn_no: number;
+  parent_id: string | null;
+  sender: string;
+  player_text: string;
+  reply_preview: string;
+  usage: Record<string, number>;
+  branch_name: string;
+  branch_id: string;
+}
+
+type MainTab = "sessions" | "ai" | "qqbot";
+
+const MAIN_TABS: { key: MainTab; label: string }[] = [
+  { key: "sessions", label: "轮次详情" },
+  { key: "ai", label: "AI 接口配置" },
+  { key: "qqbot", label: "QQ Bot 连接" },
+];
 
 export default function ConsolePage() {
-  const [sessions, setSessions] = useState<string[]>([]);
-  const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  const [turns, setTurns] = useState<TurnSummary[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mainTab, setMainTab] = useState<MainTab>("sessions");
 
   useEffect(() => {
-    apiGet<string[]>("/api/sessions")
-      .then(setSessions)
+    apiGet<TurnSummary[]>("/api/sessions")
+      .then(setTurns)
       .catch((e) => setError(e.message));
   }, []);
 
   return (
     <div className="flex h-[calc(100vh-52px)] overflow-hidden">
+      {/* 左侧：主标签 + 会话列表 */}
       <Sidebar side="left" className="overflow-y-auto">
-        <SbSection title="会话">
-          <SessionsPanel
-            sessions={sessions}
-            selected={selectedSession}
-            onSelect={setSelectedSession}
-            error={error}
-          />
-        </SbSection>
-        {selectedSession && (
-          <SbSection title="轮次">
-            <TurnsPanel sessionId={selectedSession} />
+        {/* 主标签 */}
+        <div className="border-b border-border">
+          {MAIN_TABS.map((t) => (
+            <div
+              key={t.key}
+              className={`px-4 py-2.5 text-sm cursor-pointer border-l-[3px] transition-colors ${
+                mainTab === t.key
+                  ? "border-l-primary bg-primary-container text-primary font-medium"
+                  : "border-l-transparent text-muted-foreground hover:text-fg hover:bg-surface-dim"
+              }`}
+              onClick={() => setMainTab(t.key)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter") setMainTab(t.key); }}
+            >
+              {t.label}
+            </div>
+          ))}
+        </div>
+
+        {/* 只有在轮次详情时才显示会话列表 */}
+        {mainTab === "sessions" && (
+          <SbSection title="会话轮次">
+            <TurnListPanel
+              turns={turns}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              error={error}
+            />
           </SbSection>
         )}
       </Sidebar>
-      <div className="flex-1 overflow-y-auto p-4">
-        <p className="text-muted-foreground text-center pt-10">
-          请选择轮次查看详情
-        </p>
+
+      {/* 右侧 */}
+      <div className="flex-1 overflow-y-auto">
+        {mainTab === "sessions" ? (
+          selectedId ? (
+            <TurnDetailPanel turnId={selectedId} turns={turns} />
+          ) : (
+            <p className="text-muted-foreground text-center pt-10">
+              选择轮次查看详情
+            </p>
+          )
+        ) : mainTab === "ai" ? (
+          <ConfigPanel section="ai" />
+        ) : (
+          <ConfigPanel section="qqbot" />
+        )}
       </div>
     </div>
   );

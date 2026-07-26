@@ -158,6 +158,7 @@ class Store:
         if not self.root.is_dir():
             raise StoreError(f"游戏目录不存在: {self.root}")
         self._ensure_subdirs()
+        self._init_databases()
         self._validate()
 
     # ---------- 目录校验 ----------
@@ -167,6 +168,15 @@ class Store:
             (self.root / "data" / sub).mkdir(exist_ok=True)
         # .atrpg/ 放运行时缓存（LLM 对话历史等），不是数据源
         (self.root / ".atrpg" / "history").mkdir(parents=True, exist_ok=True)
+
+    def _init_databases(self) -> None:
+        """初始化 SQLite 数据库（聊天室 + 会话树）。"""
+        from . import db as _db
+        try:
+            _db.init_chat(self.root)
+            _db.init_session(self.root)
+        except Exception:
+            logger.warning("数据库初始化失败（可能已存在）", exc_info=True)
 
     def _validate(self) -> None:
         """启动校验：必须有「世界基础材料」。

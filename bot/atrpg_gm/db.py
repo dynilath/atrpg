@@ -70,6 +70,17 @@ def chat_recent(root: Path, limit: int = 100) -> list[dict]:
         return [dict(r) for r in reversed(rows)]
 
 
+def chat_before(root: Path, before_id: int, limit: int = 50) -> list[dict]:
+    """读取指定 id 之前的 N 条消息。"""
+    with sqlite3.connect(str(_chat_db(root))) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, ts, sender, text, source FROM messages WHERE id < ? ORDER BY id DESC LIMIT ?",
+            (before_id, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
+
 # ===========================================================================
 # 会话树 (open-webui 消息树模型)
 # ===========================================================================

@@ -117,6 +117,23 @@ async def get_qqbot_config():
         return JSONResponse({})
 
 
+@router.get("/chat")
+async def get_chat_history(before: str = "", limit: int = 50):
+    """获取聊天记录。before 为消息 id（不传则取最新）。"""
+    try:
+        from pathlib import Path as _P
+        from ..deps import get_config
+        from bot.atrpg_gm import db as _db
+        root = _P(get_config().game_dir)
+        if before:
+            msgs = _db.chat_before(root, int(before), limit=limit)
+        else:
+            msgs = _db.chat_recent(root, limit=limit)
+        return JSONResponse({"messages": msgs})
+    except Exception as e:
+        return JSONResponse({"messages": [], "error": str(e)})
+
+
 # ═══════════════════════════════════════════════════════════════════
 # QQ Bot QR 扫码绑定（纯标准库，无外部依赖）
 # ═══════════════════════════════════════════════════════════════════

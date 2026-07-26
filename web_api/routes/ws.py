@@ -151,11 +151,18 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
             if not text:
                 continue
 
+            # 重新读取绑定关系（可能在 identify 之后发生了解绑/绑定）
+            if user_provider and user_openid:
+                user_char_slug = _read_user_char_slug(user_provider, user_openid)
+
+            # 构造发送者名称
+            sender_name = f"{user_char_slug}（{user_display_name}）" if user_char_slug else user_display_name
+
             # 写聊天室
             try:
                 cfg2 = get_config()
                 root = Path(cfg2.game_dir)
-                chat_msg = _db.chat_append(root, user_display_name, text, source="web")
+                chat_msg = _db.chat_append(root, sender_name, text, source="web")
                 # 广播给所有连接
                 await _broadcast({"type": "chat_msg", "payload": chat_msg})
             except Exception as e:
@@ -178,8 +185,11 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
             group_id = session_key
 
             # send_fn: 流式推送给发送者
+            # send_fn 收集全量文本用于保存
+            full_reply: list[str] = []
+
             async def _send(content: str) -> None:
-                # 发给该 uid 下所有活跃连接（用 _broadcast 发 chat_msg 不准确，因为 sender 不同）
+                full_reply.append(content)
                 dead: list[WebSocket] = []
                 for ws in _active_connections.get(uid, []):
                     try:
@@ -207,9 +217,10 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
             result = await process_turn(input_data)
 
             # 写 AI 回复到聊天室并广播
-            if result.replied and result.reply_preview:
+            if result.replied and full_reply:
                 try:
-                    bot_msg = _db.chat_append(root, "主持人", result.reply_preview, source="bot")
+                    full_text = "".join(full_reply)
+                    bot_msg = _db.chat_append(root, "主持人", full_text, source="bot")
                     await _broadcast({"type": "chat_msg", "payload": bot_msg})
                 except Exception:
                     logger.warning("Bot 回复写入聊天室失败", exc_info=True)

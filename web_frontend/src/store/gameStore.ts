@@ -7,6 +7,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
+  sender?: string;
 }
 
 export interface SceneInfo {
@@ -43,6 +44,7 @@ export interface GameState {
   setCharacter: (char: CharacterInfo | null) => void;
   setScene: (scene: SceneInfo | null) => void;
   addMessage: (msg: ChatMessage) => void;
+  addMessages: (msgs: ChatMessage[]) => void;
   appendLastAssistant: (chunk: string) => void;
   clearMessages: () => void;
 }
@@ -63,7 +65,17 @@ export const useGameStore = create<GameState>((set, get) => ({
   setScene: (scene) => set({ scene }),
 
   addMessage: (msg) =>
-    set((s) => ({ messages: [...s.messages, msg] })),
+    set((s) => {
+      if (s.messages.some((m) => m.id === msg.id)) return s;
+      return { messages: [...s.messages, msg] };
+    }),
+
+  addMessages: (msgs) =>
+    set((s) => {
+      const existing = new Set(s.messages.map((m) => m.id));
+      const newMsgs = msgs.filter((m) => !existing.has(m.id));
+      return { messages: [...newMsgs, ...s.messages] };
+    }),
 
   appendLastAssistant: (chunk) =>
     set((s) => {

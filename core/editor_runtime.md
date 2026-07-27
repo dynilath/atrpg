@@ -29,7 +29,7 @@
 | 角色(PC) | `templates/character.md` | name/type/identity/人物描写/背景/能力/剧情连接 |
 | NPC | `templates/npc.md` | name/identity/nature/性格/说话风格/关联弧光/所知信息 |
 | 道具 | `templates/item.md` | name/nature/外观/来源/持有者/用途/剧情连接 |
-| 情境 | `templates/scene.md` | name/nature/location/时刻/attendees/情境描写 |
+| 镜头过场 | `templates/scene.md` | name/nature/location/attendees/事件推进 |
 | 地点 | `templates/location.md` | name/type/规模/外观/下属情境/常驻NPC/势力 |
 | 状态记录 | `templates/state-record.md` | title/type/trigger/影响角色/关联弧光/后续钩子 |
 | 设定术语 | `templates/terminology.md` | term/别名/category/brief/详细解释/关联术语/source |

@@ -124,12 +124,13 @@ async def draft_character(
         "skills": skills, "hooks": hooks, "slug": store.slugify(name),
     }
     slug = draft["slug"]
+    hue = store.char_color(name)
 
     char_body = _render_character_body(draft)
     ctx.store.write(
         "characters", slug,
         {"name": name, "type": "玩家角色", "identity": identity, "status": "待确认",
-         "slug": slug, "owner_openid": ctx.member_openid},
+         "slug": slug, "owner_openid": ctx.member_openid, "color": hue},
         char_body,
     )
 
@@ -507,6 +508,87 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
             lines.append(f"- {cname}（{c}）-> {sname}（{s}）")
         return "\n".join(lines)
     return f"错误：未知 query_type '{query_type}'。"
+
+
+# --- 场景状态查询 -----------------------------------------------------------
+
+@tool(
+    "query_scene_state",
+    "查询某个地点的最新镜头过场状态。当玩家返回之前离开的地点、切换到焦点外的场景、"
+    "或需要知道某个地点'上次发生了什么'时调用。"
+    "根据文件名的日期时间排序，自动取最新镜头。"
+    "返回：镜头名称、游戏内时间、在场角色及其状态、最后发生的事件摘要。",
+    {
+        "type": "object",
+        "properties": {
+            "location_slug": {
+                "type": "string",
+                "description": "地点 slug，如 triad-branch-office",
+            },
+        },
+        "required": ["location_slug"],
+    },
+)
+async def query_scene_state(ctx: ToolContext, location_slug: str) -> str:
+    docs = ctx.store.list_docs("scenes")
+    # 按文件名筛选属于该地点的镜头（文件名含 location_slug）
+    candidates = []
+    for d in docs:
+        if location_slug in d["slug"]:
+            candidates.append(d)
+    if not candidates:
+        # 也搜一下 location front matter
+        for d in docs:
+            meta = ctx.store.read("scenes", d["slug"])
+            if meta and meta[0].get("location") == location_slug:
+                candidates.append(d)
+
+    if not candidates:
+        return f"地点 {location_slug} 尚未有任何镜头过场记录。"
+
+    # 文件名格式 {YYYY-MM-DD}_{HHMM}-... — 字符序即为时间序
+    candidates.sort(key=lambda d: d["slug"], reverse=True)
+    latest = candidates[0]
+    meta, body = ctx.store.read("scenes", latest["slug"])
+
+    scene_time = meta.get("time", "未知时间")
+    scene_name = meta.get("name", latest["slug"])
+    attendees = meta.get("attendees", [])
+
+    # 提取在场角色状态段（如果存在）
+    char_state = ""
+    if "## 在场角色状态" in body:
+        cs_start = body.index("## 在场角色状态")
+        cs_end = body.find("\n## ", cs_start + 1)
+        if cs_end == -1:
+            cs_end = len(body)
+        char_state = body[cs_start:cs_end].strip()
+
+    # 提取最后几行事件推进
+    event_summary = ""
+    if "## 事件推进" in body:
+        ev_start = body.rindex("## 事件推进")
+        tail = body[ev_start:]
+        lines = [l for l in tail.split("\n") if l.strip() and not l.strip().startswith("#") and not l.strip().startswith(">")]
+        # 取最近 5 条非标题行
+        recent = lines[-5:] if len(lines) > 5 else lines
+        event_summary = "\n".join(recent)
+
+    parts = [
+        f"📍 {scene_name}（{scene_time}）",
+        f"在场角色: {', '.join(attendees) if attendees else '无'}",
+    ]
+    if char_state:
+        parts.append(f"\n{char_state}")
+    if event_summary:
+        parts.append(f"\n最近事件:\n{event_summary}")
+
+    # 如果有更早的镜头，提示
+    if len(candidates) > 1:
+        prev = candidates[1]
+        parts.append(f"\n（更早的镜头: {prev['slug']}，共 {len(candidates)} 个镜头）")
+
+    return "\n".join(parts)
 
 
 # --- 骰子工具 ---------------------------------------------------------------

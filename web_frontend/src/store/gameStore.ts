@@ -8,6 +8,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   sender?: string;
+  source?: string;  // "web" | "qq" | "bot" | "system"
 }
 
 export interface SceneInfo {
@@ -39,6 +40,9 @@ export interface GameState {
   // 消息
   messages: ChatMessage[];
 
+  // 角色颜色映射: slug → color (hue 0-360)
+  charColors: Record<string, number>;
+
   // 动作
   setConnected: (connected: boolean, sessionKey?: string) => void;
   setCharacter: (char: CharacterInfo | null) => void;
@@ -47,6 +51,7 @@ export interface GameState {
   addMessages: (msgs: ChatMessage[]) => void;
   appendLastAssistant: (chunk: string) => void;
   clearMessages: () => void;
+  setCharColors: (colors: Record<string, number>) => void;
 }
 
 export const useGameStore = create<GameState>((set, get) => ({
@@ -56,6 +61,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   hasPendingChar: false,
   scene: null,
   messages: [],
+  charColors: {},
 
   setConnected: (connected, sessionKey) =>
     set({ connected, sessionKey: sessionKey || get().sessionKey }),
@@ -95,4 +101,5 @@ export const useGameStore = create<GameState>((set, get) => ({
     }),
 
   clearMessages: () => set({ messages: [] }),
+  setCharColors: (colors) => set({ charColors: colors }),
 }));

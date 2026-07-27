@@ -23,7 +23,7 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["Store", "StoreError", "slugify"]
+__all__ = ["Store", "StoreError", "slugify", "char_color"]
 
 
 def slugify(text: str) -> str:
@@ -33,6 +33,17 @@ def slugify(text: str) -> str:
     text = re.sub(r"[\s_]+", "-", text)
     text = re.sub(r"-+", "-", text).strip("-")
     return text or "untitled"
+
+
+def char_color(name: str) -> int:
+    """基于角色名生成稳定的色相值（0-360）。相同名字始终得到相同色相。
+
+    不同名字均匀扩散在色环上，视觉上天然分散。
+    """
+    h = 0
+    for ch in name:
+        h = (h * 31 + ord(ch)) & 0xffff
+    return h % 360
 
 
 class StoreError(Exception):
@@ -229,6 +240,8 @@ class Store:
             (self.root / "data" / sub).mkdir(exist_ok=True)
         # .atrpg/ 放运行时缓存（LLM 对话历史等），不是数据源
         (self.root / ".atrpg" / "history").mkdir(parents=True, exist_ok=True)
+        # 备团编辑器上传的文件（PDF/DOC 等参考材料）
+        (self.root / ".atrpg" / "uploads").mkdir(parents=True, exist_ok=True)
 
     def _init_databases(self) -> None:
         """初始化 SQLite 数据库（聊天室 + 会话树）。"""

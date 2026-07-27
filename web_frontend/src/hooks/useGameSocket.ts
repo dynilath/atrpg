@@ -46,6 +46,8 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
       try {
         const msg = JSON.parse(event.data);
         console.debug(`WS ← ${msg.type}`, msg.payload || "");
+        const srcToRole = (s: string) =>
+          s === "bot" ? "assistant" as const : s === "web" || s === "qq" ? "user" as const : "system" as const;
         switch (msg.type) {
           case "connected":
             setConnected(true);
@@ -54,10 +56,11 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
             if (msg.payload?.messages) {
               const chatMsgs = msg.payload.messages.map((m: { id: number; ts: string; sender: string; text: string; source: string }) => ({
                 id: `chat-${m.id}`,
-                role: m.source === "bot" ? "assistant" as const : m.source === "web" ? "user" as const : "system" as const,
+                role: srcToRole(m.source),
                 content: m.text,
                 timestamp: new Date(m.ts).getTime(),
                 sender: m.sender,
+                source: m.source,
               }));
               addMessages(chatMsgs);
             }
@@ -65,14 +68,13 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
           case "chat_msg":
             if (msg.payload) {
               const m = msg.payload;
-              const role = m.source === "bot" ? "assistant" as const : m.source === "web" ? "user" as const : "system" as const;
-              // 如果是当前用户发的消息，可能已经在前端显示过了，检查去重
               addMessage({
                 id: `chat-${m.id}`,
-                role,
+                role: srcToRole(m.source),
                 content: m.text,
                 timestamp: new Date(m.ts).getTime(),
                 sender: m.sender,
+                source: m.source,
               });
             }
             break;

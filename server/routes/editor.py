@@ -8,15 +8,17 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import JSONResponse
 
 from server.deps import get_store
 from core.llm import chat
 from core.store import _parse_doc, slugify
+from .file_parser import parse_to_txt, read_uploaded_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/editor", tags=["editor"])
@@ -263,6 +265,10 @@ async def create_character(body: dict[str, Any]):
         meta = result["meta"]
         meta.setdefault("type", "玩家角色" if char_type == "pc" else "NPC")
         meta.setdefault("status", "正式" if char_type == "npc" else "待确认")
+        # PC 自动分配颜色
+        if char_type == "pc" and "color" not in meta:
+            from core.store import char_color
+            meta["color"] = char_color(meta.get("name", result["slug"]))
         p = s.write(kind, result["slug"], meta, result["body"])
         logger.info(f"编辑助手创建{kind}: {result['slug']}")
         return JSONResponse({
@@ -464,9 +470,14 @@ async def editor_chat(body: dict[str, Any]):
     runtime = _load_editor_runtime()
     existing = _build_existing_summary(s)
     templates = _load_all_templates()
+    uploaded_text = read_uploaded_text(Path(s.root) / ".atrpg" / "uploads")
+
+    system_content = f"{runtime}\n\n{templates}\n\n## 已有内容概况\n\n{existing}"
+    if uploaded_text:
+        system_content += f"\n\n{uploaded_text}"
 
     llm_messages = [
-        {"role": "system", "content": f"{runtime}\n\n{templates}\n\n## 已有内容概况\n\n{existing}"}
+        {"role": "system", "content": system_content}
     ] + history[-30:] + [
         {"role": "user", "content": message}
     ]
@@ -532,3 +543,131 @@ def _load_all_templates() -> str:
         except (OSError, UnicodeDecodeError):
             pass
     return "\n".join(parts) if len(parts) > 1 else ""
+
+
+# ---------------------------------------------------------------------------
+# 文件上传（.atrpg/uploads/）
+# ---------------------------------------------------------------------------
+
+ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx"}
+MAX_UPLOAD_MB = 50
+
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """上传 PDF/DOC 参考材料到 .atrpg/uploads/。
+
+    返回 {ok, filename, size, path}。
+    """
+    if not file.filename:
+        return JSONResponse({"error": "文件名为空"}, status_code=400)
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return JSONResponse(
+            {"error": f"不支持的文件类型（允许: {', '.join(sorted(ALLOWED_EXTENSIONS))}）"},
+            status_code=400,
+        )
+
+    try:
+        s = get_store()
+    except Exception as e:
+        return JSONResponse({"error": f"Store 未就绪: {e}"}, status_code=500)
+
+    upload_dir = Path(s.root) / ".atrpg" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # 防止文件名冲突：加时间戳前缀
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_name = f"{ts}_{file.filename}"
+    dest = upload_dir / safe_name
+
+    # 分块读取写入，避免超大文件撑爆内存
+    size = 0
+    try:
+        with open(dest, "wb") as f:
+            while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                size += len(chunk)
+                if size > MAX_UPLOAD_MB * 1024 * 1024:
+                    f.close()
+                    dest.unlink(missing_ok=True)
+                    return JSONResponse(
+                        {"error": f"文件超过最大允许大小（{MAX_UPLOAD_MB}MB）"},
+                        status_code=413,
+                    )
+                f.write(chunk)
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+
+    logger.info(f"编辑器上传: {safe_name} ({size} bytes) -> .atrpg/uploads/")
+
+    # 自动解析为 txt
+    txt_path = parse_to_txt(dest)
+    parsed = bool(txt_path)
+
+    return JSONResponse({
+        "ok": True,
+        "filename": safe_name,
+        "original_name": file.filename,
+        "size": size,
+        "path": str(dest),
+        "uploaded_at": ts,
+        "parsed": parsed,
+        "txt_path": str(txt_path) if txt_path else None,
+    })
+
+
+@router.get("/uploads")
+async def list_uploads():
+    """列出 .atrpg/uploads/ 中已上传的参考文件。"""
+    try:
+        s = get_store()
+    except Exception as e:
+        return JSONResponse({"error": f"Store 未就绪: {e}"}, status_code=500)
+
+    upload_dir = Path(s.root) / ".atrpg" / "uploads"
+    if not upload_dir.exists():
+        return JSONResponse({"files": []})
+
+    files = []
+    for p in sorted(upload_dir.iterdir(), reverse=True):
+        if p.is_file() and p.suffix.lower() not in (".txt",):  # 排除解析产物
+            stat = p.stat()
+            parsed = p.with_suffix(".txt").exists()
+            files.append({
+                "filename": p.name,
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                "parsed": parsed,
+            })
+
+    return JSONResponse({"files": files})
+
+
+@router.delete("/uploads/{filename}")
+async def delete_upload(filename: str):
+    """删除 .atrpg/uploads/ 中的指定文件。"""
+    try:
+        s = get_store()
+    except Exception as e:
+        return JSONResponse({"error": f"Store 未就绪: {e}"}, status_code=500)
+
+    upload_dir = Path(s.root) / ".atrpg" / "uploads"
+    dest = upload_dir / filename
+
+    # 防止路径穿越攻击
+    resolved = dest.resolve()
+    if not str(resolved).startswith(str(upload_dir.resolve())):
+        return JSONResponse({"error": "非法文件路径"}, status_code=400)
+
+    if not dest.exists():
+        return JSONResponse({"error": "文件不存在"}, status_code=404)
+
+    dest.unlink()
+    # 同时删除关联的解析 txt
+    txt = dest.with_suffix(".txt")
+    if txt.exists():
+        txt.unlink()
+    logger.info(f"编辑器删除上传文件: {filename}")
+    return JSONResponse({"ok": True})

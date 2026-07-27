@@ -279,7 +279,7 @@ class QQBotManager:
 
         logger.info(f"QQ私聊: user={member_openid} text={text[:60]!r}")
 
-        self._record_user_msg(store.root, member_openid, text, source="qq")
+        self._record_user_msg(store.root, store, member_openid, text, source="qq")
 
         full_reply: list[str] = []
 
@@ -323,7 +323,7 @@ class QQBotManager:
         if char_slug and char_slug != "none":
             d = store.read("characters", char_slug)
             name = d[0].get("name", char_slug) if d else char_slug
-            return f"QQ:{name}"
+            return f"{name}（QQ:{member_openid[:8]}）"
         return f"QQ:{member_openid[:8]}"
 
     async def _handle_unbind(self, store: Store, member_openid: str) -> str:
@@ -350,9 +350,10 @@ class QQBotManager:
                 result.append((app_id, secret))
         return result
 
-    def _record_user_msg(self, root: Path, member_openid: str, text: str, source: str):
+    def _record_user_msg(self, root: Path, store: Store, member_openid: str, text: str, source: str):
         try:
-            _db.chat_append(root, f"QQ:{member_openid[:8]}", text, source=source)
+            sender = self._sender_name(store, member_openid)
+            _db.chat_append(root, sender, text, source=source)
         except Exception:
             pass
 

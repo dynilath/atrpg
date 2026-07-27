@@ -1,10 +1,11 @@
 /** 备团编辑器主页面。 */
 
-import { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Sidebar, SbTabs, SbTab, SbList, Button } from "../../components/ui";
 import EditorAIPanel from "./EditorAIPanel";
+import { BookOpen, Palette } from "lucide-react";
 
 type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations";
 
@@ -18,7 +19,7 @@ const TABS: { key: ResourceKind; label: string }[] = [
   { key: "characters", label: "玩家角色" },
   { key: "npcs", label: "NPC" },
   { key: "items", label: "物品" },
-  { key: "scenes", label: "情境" },
+  { key: "scenes", label: "镜头过场" },
   { key: "locations", label: "地点" },
 ];
 
@@ -27,7 +28,7 @@ const KIND_LABELS: Record<string, string> = {
   characters: "玩家角色",
   npcs: "NPC",
   items: "物品",
-  scenes: "情境",
+  scenes: "镜头过场",
   locations: "地点",
 };
 
@@ -61,6 +62,9 @@ export default function EditorPage() {
   const [editMeta, setEditMeta] = useState<Record<string, string> | null>(null);
   const [editBody, setEditBody] = useState("");
   const [saving, setSaving] = useState(false);
+  const [worldBookBody, setWorldBookBody] = useState<string>("");
+  const [styleGuideBody, setStyleGuideBody] = useState<string>("");
+  const [coreDocKind, setCoreDocKind] = useState<"world-book" | "style-guide" | null>(null);
 
   const handleSave = useCallback(async () => {
     if (!selectedSlug || !editMeta) return;
@@ -130,6 +134,34 @@ export default function EditorPage() {
     }
   }, [selectedMeta, selectedBody]);
 
+  // 加载文风/世界书
+  const loadCoreDoc = useCallback(async (kind: "world-book" | "style-guide") => {
+    setCoreDocKind(kind);
+    setSelectedSlug(null);
+    setSelectedMeta(null);
+    setShowEdit(false);
+    try {
+      const r = await fetch(`/api/data/${kind}/main`);
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
+      setSelectedMeta(data.meta || {});
+      setSelectedBody(data.body || "");
+      if (kind === "world-book") setWorldBookBody(data.body || "");
+      else setStyleGuideBody(data.body || "");
+    } catch {
+      setSelectedMeta({});
+      setSelectedBody("");
+    }
+  }, []);
+
+  // 首次加载预取文风和世界书摘要
+  useEffect(() => {
+    fetch("/api/data/world-book/main")
+      .then(r => r.json()).then(d => setWorldBookBody(d.body || "")).catch(() => {});
+    fetch("/api/data/style-guide/main")
+      .then(r => r.json()).then(d => setStyleGuideBody(d.body || "")).catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadList(activeTab);
   }, [activeTab, loadList]);
@@ -138,6 +170,32 @@ export default function EditorPage() {
     <div className="flex h-[calc(100vh-52px)] overflow-hidden">
       {/* 左侧：资源列表 */}
       <Sidebar side="left">
+        {/* 世界书与文风 */}
+        <div className="flex flex-col border-b border-border">
+          <button
+            onClick={() => loadCoreDoc("world-book")}
+            className={`flex items-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors ${
+              coreDocKind === "world-book"
+                ? "bg-primary-container text-primary"
+                : "text-fg hover:bg-surface-elevated"
+            }`}
+          >
+            <BookOpen size={16} />
+            世界书
+          </button>
+          <button
+            onClick={() => loadCoreDoc("style-guide")}
+            className={`flex items-center gap-2 px-3 py-2.5 text-sm font-medium transition-colors border-t border-border ${
+              coreDocKind === "style-guide"
+                ? "bg-primary-container text-primary"
+                : "text-fg hover:bg-surface-elevated"
+            }`}
+          >
+            <Palette size={16} />
+            文风
+          </button>
+        </div>
+
         <SbTabs>
           {TABS.map((t) => (
             <SbTab
@@ -213,7 +271,9 @@ export default function EditorPage() {
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-sm text-muted-foreground font-mono">
-                {selectedSlug}
+                {coreDocKind === "world-book" ? "世界书 (data/world-book.md)" :
+                 coreDocKind === "style-guide" ? "文风参考 (data/style-guide.md)" :
+                 selectedSlug}
               </span>
               {showEdit ? (
                 <div className="flex gap-2">
@@ -239,6 +299,9 @@ export default function EditorPage() {
                   <EditRow label="类型" value={editMeta?.type || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, type: v }))} />
                   <EditRow label="简介" value={editMeta?.brief || editMeta?.identity || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
                   <EditRow label="性质" value={editMeta?.nature || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, nature: v }))} />
+                  {(activeTab === "characters") && (
+                    <EditRow label="颜色(0-360)" value={String(editMeta?.color ?? "")} onChange={(v) => setEditMeta((m) => ({ ...m!, color: v ? Number(v) : undefined as any }))} />
+                  )}
                   <div className="flex gap-3">
                     <span className="text-muted-foreground text-sm shrink-0 mt-2">正文：</span>
                     <textarea
@@ -256,6 +319,14 @@ export default function EditorPage() {
                     <MetaRow label="类型" value={selectedMeta.type || ""} />
                     <MetaRow label="简介" value={selectedMeta.brief || selectedMeta.identity || ""} />
                     <MetaRow label="性质" value={selectedMeta.nature || ""} />
+                    {activeTab === "characters" && selectedMeta.color != null && (
+                      <MetaRow label="颜色" value={
+                        <span className="inline-flex items-center gap-1.5">
+                          <span className="inline-block w-3.5 h-3.5 rounded-full border border-border" style={{ backgroundColor: `hsl(${selectedMeta.color}, 50%, 40%)` }} />
+                          {String(selectedMeta.color)}
+                        </span>
+                      } />
+                    )}
                   </div>
 
                   {selectedMeta.custom_info && typeof selectedMeta.custom_info === "object" && (
@@ -309,7 +380,7 @@ export default function EditorPage() {
 }
 
 /** 详情行：label + value */
-function MetaRow({ label, value }: { label: string; value: string }) {
+function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
   if (!value) return null;
   return (
     <div className="flex gap-3 text-sm">

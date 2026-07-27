@@ -51,6 +51,12 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
           })
         );
         setCharacters(chars);
+        // 加载角色颜色映射
+        const colorMap: Record<string, number> = {};
+        list.forEach((c: { slug: string; meta: Record<string, unknown> }) => {
+          if (c.meta["color"] != null) colorMap[c.slug] = Number(c.meta["color"]);
+        });
+        useGameStore.getState().setCharColors(colorMap);
       } catch {
         // ignore
       } finally {

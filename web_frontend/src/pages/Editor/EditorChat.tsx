@@ -40,7 +40,7 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: "instant" } as ScrollIntoViewOptions);
   }, [messages]);
 
   const handleSend = async () => {

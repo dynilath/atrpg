@@ -20,6 +20,7 @@ interface TurnDetail {
   parent_id: string | null;
   parent_turn_no: number | null;
   messages: MessageItem[];
+  turn_messages: MessageItem[];
 }
 
 interface TurnDetailPanelProps {
@@ -129,13 +130,12 @@ export default function TurnDetailPanel({ turnId, turns, onBranchCreated, isCurr
       )}
 
       <div className="space-y-3">
-        {detail.messages
-          .filter((m) => m.role !== "system")
+        {detail.turn_messages
           .map((m, i) => {
             if (m.role === "assistant" && m.tool_calls?.length) {
               return (
                 <div key={i} className="rounded-lg p-3 chat-bg-assistant border-l-[3px] border-l-success">
-                  <div className="text-caption font-semibold text-muted-foreground mb-1">主持人</div>
+                  <div className="text-caption font-semibold text-muted-foreground mb-1">assistant</div>
                   {m.content && (
                     <pre className="text-sm whitespace-pre-wrap font-body text-fg leading-relaxed mb-2">
                       {m.content}
@@ -167,7 +167,7 @@ export default function TurnDetailPanel({ turnId, turns, onBranchCreated, isCurr
                 }`}
               >
                 <div className="text-caption font-semibold text-muted-foreground mb-1">
-                  {m.role === "user" ? "玩家" : m.role === "assistant" ? "主持人" : `工具 ${m.tool_call_id ? "→ " + m.tool_call_id.slice(-6) : ""}`}
+                  {m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : `工具 ${m.tool_call_id ? "→ " + m.tool_call_id.slice(-6) : ""}`}
                 </div>
                 <pre className="text-sm whitespace-pre-wrap font-body text-fg leading-relaxed">
                   {typeof m.content === "string" ? m.content : JSON.stringify(m.content, null, 2)}

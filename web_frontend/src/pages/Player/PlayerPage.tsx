@@ -145,7 +145,7 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
           </div>
         </SbSection>
 
-        <SbSection title="镜头过场">
+        <SbSection title="情景">
           <ScenePanel />
         </SbSection>
       </Sidebar>

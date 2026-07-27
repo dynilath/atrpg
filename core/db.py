@@ -179,6 +179,7 @@ def session_save_turn(
             "reply_preview": (meta or {}).get("reply_preview", ""),
             "usage": (meta or {}).get("usage", {}),
             "messages": messages,
+            "turn_messages": (meta or {}).get("turn_messages", messages),
         }
         snap_path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
 
@@ -305,9 +306,11 @@ def session_get_turn_detail(root: Path, turn_id: str) -> dict | None:
 
         snap_path = Path(row["snapshot_path"])
         messages = []
+        turn_messages = []
         if snap_path.exists():
             data = json.loads(snap_path.read_text(encoding="utf-8"))
             messages = data.get("messages", [])
+            turn_messages = data.get("turn_messages", messages)
 
         # 获取父节点信息
         parent_turn_no = None
@@ -325,6 +328,7 @@ def session_get_turn_detail(root: Path, turn_id: str) -> dict | None:
             "parent_id": parent_id,
             "parent_turn_no": parent_turn_no,
             "messages": messages,
+            "turn_messages": turn_messages,
         }
 
 

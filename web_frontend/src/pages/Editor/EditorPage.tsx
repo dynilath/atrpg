@@ -19,7 +19,7 @@ const TABS: { key: ResourceKind; label: string }[] = [
   { key: "characters", label: "玩家角色" },
   { key: "npcs", label: "NPC" },
   { key: "items", label: "物品" },
-  { key: "scenes", label: "镜头过场" },
+  { key: "scenes", label: "情景" },
   { key: "locations", label: "地点" },
   { key: "terminology", label: "术语" },
 ];
@@ -29,7 +29,7 @@ const KIND_LABELS: Record<string, string> = {
   characters: "玩家角色",
   npcs: "NPC",
   items: "物品",
-  scenes: "镜头过场",
+  scenes: "情景",
   locations: "地点",
   terminology: "术语",
 };

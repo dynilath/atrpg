@@ -410,8 +410,8 @@ class Store:
 
     def _truncate(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """截断历史（保留首条 system + 最近若干条），保证 tool_calls/tool 配对完整。"""
-        MAX = 40
-        KEEP_RECENT = 20
+        MAX = 120
+        KEEP_RECENT = 80
         if len(messages) <= MAX:
             return messages
         head = messages[:1]
@@ -553,17 +553,91 @@ class Store:
         return True
 
     # ---------- 位置追踪 ----------
-    def chars_in_scene(self, scene_slug: str) -> list[str]:
-        """查某场景有哪些角色（读场景 meta「attendees」字段，反向查询）。"""
+    def char_current_scene(self, char_slug: str) -> str | None:
+        """读角色文件的 current_scene 字段（首要来源）。"""
+        d = self.read("characters", char_slug)
+        if d is None:
+            return None
+        return d[0].get("current_scene")
+
+    def npc_current_scene(self, npc_slug: str) -> str | None:
+        """读 NPC 文件的 current_scene 字段。"""
+        d = self.read("npcs", npc_slug)
+        if d is None:
+            return None
+        return d[0].get("current_scene")
+
+    def set_char_current_scene(self, char_slug: str, scene_slug: str) -> None:
+        """写角色文件的 current_scene 字段。"""
+        d = self.read("characters", char_slug)
+        if d is None:
+            raise StoreError(f"角色 {char_slug} 不存在")
+        meta, body = d
+        meta["current_scene"] = scene_slug
+        self.write("characters", char_slug, meta, body)
+
+    def set_npc_current_scene(self, npc_slug: str, scene_slug: str) -> None:
+        """写 NPC 文件的 current_scene 字段。"""
+        d = self.read("npcs", npc_slug)
+        if d is None:
+            raise StoreError(f"NPC {npc_slug} 不存在")
+        meta, body = d
+        meta["current_scene"] = scene_slug
+        self.write("npcs", npc_slug, meta, body)
+
+    def who_in_scene(self, scene_slug: str) -> tuple[list[str], list[str]]:
+        """扫描所有角色和 NPC 文件，返回 (角色slug列表, NPC slug列表)。"""
+        chars, npcs = [], []
+        for d in self.list_docs("characters"):
+            if d["meta"].get("current_scene") == scene_slug:
+                chars.append(d["slug"])
+        for d in self.list_docs("npcs"):
+            if d["meta"].get("current_scene") == scene_slug:
+                npcs.append(d["slug"])
+        return chars, npcs
+
+    def scene_location(self, scene_slug: str) -> str | None:
+        """读场景文件的 location 字段。"""
         d = self.read("scenes", scene_slug)
         if d is None:
-            return []
-        return d[0].get("attendees", []) or []
+            return None
+        return d[0].get("location")
+
+    def location_name(self, loc_slug: str) -> str | None:
+        """读地点文件的 name 字段。"""
+        d = self.read("locations", loc_slug)
+        if d is None:
+            return None
+        return d[0].get("name")
 
     def all_char_locations(self, group_id: str) -> dict[str, str]:
-        """列出某会话所有角色的当前位置（角色 slug → 场景 slug）。"""
+        """扫描所有角色和 NPC 文件，返回 slug → 场景 slug。"""
+        result: dict[str, str] = {}
+        for d in self.list_docs("characters"):
+            cs = d["meta"].get("current_scene")
+            if cs:
+                result[d["slug"]] = cs
+        for d in self.list_docs("npcs"):
+            cs = d["meta"].get("current_scene")
+            if cs:
+                result[d["slug"]] = cs
+        return result
+
+    # 兼容旧接口：char_scene 尝试读角色文件，回退到 session map
+    def char_scene(self, group_id: str, char_slug: str) -> str | None:
+        cs = self.char_current_scene(char_slug)
+        if cs:
+            return cs
+        # 回退：旧的 session map（逐步废弃）
         s = self.get_session(group_id)
-        return dict(s.char_scene_map)
+        return s.char_scene_map.get(char_slug)
+
+    def set_char_scene(self, group_id: str, char_slug: str, scene_slug: str) -> None:
+        """写角色文件的 current_scene（同时同步 session map 以保持兼容）。"""
+        self.set_char_current_scene(char_slug, scene_slug)
+        s = self.get_session(group_id)
+        s.char_scene_map[char_slug] = scene_slug
+        self.save_session(s)
 
     def player_binding(self, user_id: str) -> str | None:
         """QQ → 角色 slug（统一读 .atrpg/users/qq/）。"""

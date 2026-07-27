@@ -61,28 +61,56 @@ def _load_runtime_prompt(mode: str = "game") -> str:
     return p.read_text(encoding="utf-8")
 
 
+# system prefix 缓存：(game_dir, mode) → (mtime_key, content)
+_system_prefix_cache: dict[tuple[str, str], tuple[float, str]] = {}
+
+
 def _load_system_prefix(s: store.Store, mode: str = "game") -> str:
     """构造稳定 system 前缀：运行时提示词 + 世界书 + 文风参考。
 
     这几部分每轮不变，作为消息列表首条，让 DeepSeek 等提供商的前缀缓存命中。
     editor 模式不加世界书（编辑助手不需要常驻世界观知识）。
+
+    结果以文件 mtime 为 key 缓存，只有文件变动时才重新生成。
     """
+    game_dir = str(s.root)
+    cache_key = (game_dir, mode)
+
+    # 计算各来源文件的 mtime 作为缓存版本
+    runtime_file = (
+        Path(__file__).resolve().parent / ("editor_runtime.md" if mode == "edit" else "gm_runtime.md")
+    )
+    world_file = s.root / "data" / "world-book.md"
+    style_file = s.root / "data" / "style-guide.md"
+
+    mtime_key = runtime_file.stat().st_mtime if runtime_file.exists() else 0
+    if mode != "edit":
+        if world_file.exists():
+            mtime_key += world_file.stat().st_mtime
+        if style_file.exists():
+            mtime_key += style_file.stat().st_mtime
+
+    cached = _system_prefix_cache.get(cache_key)
+    if cached and cached[0] == mtime_key:
+        return cached[1]
+
     runtime = _load_runtime_prompt(mode)
     parts = [runtime]
     if mode != "edit":
-        # 编辑助手不加载世界书——它面向备团用户，不需要跑团世界观上下文
         world = s.read_world_book()
         if world:
             parts.append(f"---\n\n# 世界书（常驻世界观知识，你的设定依据）\n\n{world}")
         style = s.read_style_guide()
         if style:
             parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与场景描写时模仿此风格）\n\n{style}")
-    return "\n\n".join(parts)
+    result = "\n\n".join(parts)
+    _system_prefix_cache[cache_key] = (mtime_key, result)
+    return result
 
 
 def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_slug: str | None = None) -> str:
-    """构造发送人框架：最小必要信息（谁在说话、关联角色、绑定状态）。
-    
+    """构造发送人框架：角色名、情景、同场角色/NPC、地点。
+
     char_slug: Web 端已知的角色 slug（优先级高于 player_binding 查询）。
     """
     effective_slug = char_slug or s.player_binding(member_openid)
@@ -91,14 +119,51 @@ def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_
         d = s.read("characters", effective_slug)
         char_name = d[0].get("name", effective_slug) if d else effective_slug
         char_identity = d[0].get("identity", "") if d else ""
-        scene_slug = s.char_scene(group_id, effective_slug)
+
+        scene_slug = s.char_current_scene(effective_slug) or s.char_scene(group_id, effective_slug)
         scene_name = ""
+        location_str = ""
+        present_parts: list[str] = []
+
         if scene_slug:
             sd = s.read("scenes", scene_slug)
             scene_name = sd[0].get("name", scene_slug) if sd else scene_slug
-        loc = f" | 当前场景: {scene_name}" if scene_name else ""
+
+            # 同场角色 + NPC
+            chars, npcs = s.who_in_scene(scene_slug)
+            other_chars = [c for c in chars if c != effective_slug]
+            if other_chars:
+                cn = []
+                for c in other_chars:
+                    cd = s.read("characters", c)
+                    cn.append(cd[0].get("name", c) if cd else c)
+                present_parts.append(f"同场角色: {', '.join(cn)}")
+            if npcs:
+                nn = []
+                for n in npcs:
+                    nd = s.read("npcs", n)
+                    nn.append(nd[0].get("name", n) if nd else n)
+                present_parts.append(f"同场NPC: {', '.join(nn)}")
+
+            # 所属地点 + 缺失提示
+            hints: list[str] = []
+            if sd:
+                loc_slug = sd[0].get("location")
+                if loc_slug:
+                    loc_name = s.location_name(loc_slug)
+                    if loc_name:
+                        location_str = f" | 地点: {loc_name}"
+                    else:
+                        hints.append(f"⚠ 地点 {loc_slug} 不存在，可 create_location")
+            else:
+                hints.append(f"⚠ 情景 {scene_slug} 档案缺失，可 create_scene")
+            if hints:
+                present_parts.extend(hints)
+
+        loc = f" | 情景: {scene_name}" if scene_name else ""
+        present = ("\n" + " | ".join(present_parts)) if present_parts else ""
         ident = f"（{char_identity}）" if char_identity else ""
-        return f'<turn sender="{char_name}" char="{effective_slug}"{loc}>\n状态: 已绑定角色{ident}'
+        return f'<turn sender="{char_name}" char="{effective_slug}"{loc}{location_str}>{present}\n状态: 已绑定角色{ident}'
     else:
         pending = _find_pending_char(s, member_openid)
         if pending:
@@ -182,7 +247,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
         messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user + reply_hint}]
     else:
         reply_hint = (
-            "\n\n（首次对话。如需了解当前场景/在场者/已有弧光，"
+            "\n\n（首次对话。如需了解当前情景/在场者/已有弧光，"
             "用 query_locations / query_memory 工具查询。处理完后**必须调用 reply 工具发送回复**。）"
         )
         messages = [
@@ -198,6 +263,9 @@ async def process_turn(input: TurnInput) -> TurnResult:
         raw_text=input.text,
         send_fn=input.send_fn,
     )
+
+    # ── 记录本轮消息起点（用于提取增量）──
+    turn_start_idx = len(messages)
 
     # ── 工具调用循环（流式：reply 工具被调用时立即发送）──
     schemas = tool_schemas()
@@ -251,10 +319,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
     # ── 重试：若本轮从未调 reply，注入提示让 AI 补刀 ──
     if not ctx.replied:
-        retry_prompt = (
-            "（系统提示：你本轮尚未调用 reply 工具回复玩家。"
-            "请调用 reply(content=\"...\") 将你的回复内容发送给玩家。）"
-        )
+        retry_prompt = "请调用 reply 工具发送故事内容。"
         messages.append({"role": "user", "content": retry_prompt})
         logger.info(f"注入 reply 重试提示，messages={len(messages)}")
 
@@ -305,6 +370,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
         "player_text": input.text[:120],
         "reply_preview": ctx.reply_preview,
         "usage": ctx.last_usage,
+        "turn_messages": messages[turn_start_idx:],  # 本轮增量消息
     }
 
     # ── 填充结果 ──

@@ -29,7 +29,7 @@ const PROMPT_PLACEHOLDERS: Record<string, string> = {
   characters: '例如："创建一个叛逃的帝国法师"',
   npcs: '例如："创建一个港口守夜人队长，外冷内热的老兵"',
   items: '例如："设计一把名为潮汐之刃的魔法剑"',
-  scenes: '例如："设计一段码头仓库的镜头过场"',
+  scenes: '例如："设计一段码头仓库的情景"',
   locations: '例如："设计灰港区的地下黑市"',
 };
 

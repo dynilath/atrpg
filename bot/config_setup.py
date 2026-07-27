@@ -20,7 +20,7 @@ from typing import Any
 
 __all__ = ["ensure_config", "load_config", "ConfigError", "CONFIG_PATH"]
 
-CONFIG_PATH = Path(__file__).resolve().parent / "config.toml"
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.toml"
 
 # 占位符：出现这些值视为"未配置"
 _PLACEHOLDERS = {"your-llm-key", "your_app_id", "your_app_token", "your_app_secret", "123456789", ""}
@@ -78,13 +78,13 @@ def _missing_fields(cfg: dict[str, Any]) -> list[str]:
         missing.append("qq_bots")
     else:
         bot = bots[0]
-        for k in ("id", "token", "secret"):
+        for k in ("id", "secret"):
             if _is_placeholder(bot.get(k)):
                 missing.append(f"qq_bots.{k}")
                 break
 
     atrpg = cfg.get("atrpg", {})
-    for key in ("llm_api_key", "game_dir", "target_group"):
+    for key in ("llm_api_key", "game_dir"):
         if _is_placeholder(atrpg.get(key)):
             missing.append(f"atrpg.{key}")
 
@@ -187,15 +187,7 @@ def _wizard() -> dict[str, Any]:
 
     # 3. 目标群（openid 无法预先查，要先留空跑起来再抄）
     print("\n=== 目标群 openid ===")
-    print("  QQ 官方群的 openid 无法预先查询，只能从 bot 收到的消息事件里提取。")
-    print("  建议流程：")
-    print("    a) 先留空（响应所有群）")
-    print("    b) 在 QQ 开放平台「沙箱配置」把你的测试群加进去（你须是群主/管理员，群≤20人）")
-    print("    c) 手机 QQ 把机器人添加进群，在群里 @机器人 发一条消息")
-    print("    d) bot 日志会打印 group_openid=xxxxx，抄回来填进 config.toml 的 target_group")
-    print("    e) 重启 bot，此后只响应这个群")
-    target_group = _prompt("目标群 openid", default="",
-                           hint="先留空（直接回车）；拿到 openid 后再 python run.py --setup 填回来")
+    print("  群绑定通过启动时生成的令牌完成：在 QQ 群中 @bot 发送令牌即可自动绑定。")
 
     # 4. 私聊测试开关
     print("\n=== 私聊测试模式 ===")
@@ -227,15 +219,11 @@ def _wizard() -> dict[str, Any]:
         "qq_bots": [
             {
                 "id": app_id,
-                "token": app_secret,
                 "secret": app_secret,
-                "intent": {"c2c_group_at_messages": True},
-                "use_websocket": True,
             }
         ],
         "atrpg": {
             "game_dir": game_dir,
-            "target_group": target_group,
             "c2c_test_mode": c2c_test_mode,
             "llm_base_url": base_url,
             "llm_api_key": api_key,

@@ -10,11 +10,24 @@ interface MarkdownRenderProps {
 interface RenderedItem {
   key: number;
   element: React.ReactNode;
-  type: "li" | "other";
+  type: "li" | "table" | "other";
 }
 
 function renderLine(line: string, i: number): RenderedItem {
   const trimmed = line.trim();
+
+  // 表格行（以 | 开头或包含多个 |）
+  if (_isTableRow(trimmed)) {
+    const cells = trimmed
+      .split("|")
+      .map((c) => c.trim())
+      .filter((c) => c !== "");
+    return {
+      key: i,
+      type: "table",
+      element: <>{cells}</>, // cells 作为 React fragment 子元素，由上层组装
+    };
+  }
 
   if (trimmed.startsWith("### ")) {
     return {
@@ -110,13 +123,26 @@ function renderLine(line: string, i: number): RenderedItem {
   };
 }
 
+function _isTableRow(line: string): boolean {
+  // 表格行：至少有一个 |，且看起来像表格（不是普通文本中的管道符）
+  if (!line.includes("|")) return false;
+  // 排除标题、列表、横线等
+  if (line.startsWith("#") || line.startsWith("- ") || line.startsWith("* ")) return false;
+  // 排除只有 --- 或 *** 的横线
+  if (/^[-*_]{3,}$/.test(line)) return false;
+  // 检查是否真的像表格：以 | 开头或包含多个 |
+  const pipes = line.split("|").length - 1;
+  return pipes >= 2 || (line.startsWith("|") && pipes >= 1);
+}
+
 export default function MarkdownRender({ content, className }: MarkdownRenderProps) {
   const lines = useMemo(() => content.split("\n"), [content]);
   const items = useMemo(() => lines.map((line, i) => renderLine(line, i)), [lines]);
 
-  // 将连续的 <li> 包进 <ul>
+  // 将连续的 <li> 包进 <ul>，连续的 table 行拼成 <table>
   const elements: React.ReactNode[] = [];
   let liBuffer: React.ReactNode[] = [];
+  let tableBuffer: { key: number; cells: string[] }[] = [];
 
   const flushLi = () => {
     if (liBuffer.length > 0) {
@@ -129,15 +155,75 @@ export default function MarkdownRender({ content, className }: MarkdownRenderPro
     }
   };
 
+  const flushTable = () => {
+    if (tableBuffer.length < 2) {
+      // 不够组成表格（至少需要 head + separator），降级为普通文本
+      for (const row of tableBuffer) {
+        elements.push(
+          <p key={`t-${row.key}`} className="my-1 leading-relaxed">
+            {row.cells.join(" | ")}
+          </p>
+        );
+      }
+      tableBuffer = [];
+      return;
+    }
+    const headCells = tableBuffer[0].cells;
+    const bodyRows = tableBuffer.slice(2); // skip header and separator
+    elements.push(
+      <div key={`tbl-${elements.length}`} className="overflow-x-auto my-2">
+        <table className="w-full text-sm border-collapse">
+          <thead>
+            <tr className="bg-surface-elevated">
+              {headCells.map((c, ci) => (
+                <th key={ci} className="border border-border px-3 py-1.5 text-left font-semibold">
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {bodyRows.map((row, ri) => (
+              <tr key={ri} className="even:bg-surface-elevated/50">
+                {row.cells.map((c, ci) => (
+                  <td key={ci} className="border border-border px-3 py-1.5">
+                    {c}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+    tableBuffer = [];
+  };
+
   for (const item of items) {
     if (item.type === "li") {
+      flushTable();
       liBuffer.push(item.element);
+    } else if (item.type === "table") {
+      flushLi();
+      // item.element is a fragment containing cell strings
+      const cells: string[] = [];
+      // Extract cells from the fragment's children
+      const fragment = item.element as React.ReactElement;
+      if (fragment.props.children) {
+        const children = Array.isArray(fragment.props.children) ? fragment.props.children : [fragment.props.children];
+        for (const child of children) {
+          if (typeof child === "string") cells.push(child);
+        }
+      }
+      tableBuffer.push({ key: item.key, cells });
     } else {
       flushLi();
+      flushTable();
       elements.push(item.element);
     }
   }
   flushLi();
+  flushTable();
 
   return (
     <div className={`break-words font-body text-base [&_strong]:font-bold [&_em]:italic ${className || ""}`}>

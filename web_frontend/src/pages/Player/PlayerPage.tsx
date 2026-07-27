@@ -93,49 +93,50 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
       {/* 侧边面板 */}
       <Sidebar>
         <SbSection title="角色">
-          {hasChar ? (
-            <CharacterCard onUnbind={handleUnbind} />
-          ) : (
-            <div className="flex flex-col gap-2 px-2">
-              <Button onClick={() => setShowCreateDialog(true)}>
-                创建角色
-              </Button>
+          {hasChar && <CharacterCard onUnbind={handleUnbind} />}
+          <div className="flex flex-col gap-2 px-2">
+            <Button onClick={() => setShowCreateDialog(true)}>
+              创建角色
+            </Button>
 
-              <div className="text-sm text-muted-foreground text-center py-1">
-                或
-              </div>
+            {!hasChar && (
+              <>
+                <div className="text-sm text-muted-foreground text-center py-1">
+                  或
+                </div>
 
-              {loadingChars ? (
-                <div className="text-xs text-muted-foreground text-center">加载中...</div>
-              ) : characters.length > 0 ? (
-                <div className="flex gap-1.5 items-center">
-                  <select
-                    className="flex-1 px-2 py-2 text-sm bg-bg text-fg border border-border rounded-sm min-w-0"
-                    value={selectedChar}
-                    onChange={(e) => setSelectedChar(e.target.value)}
-                  >
-                    <option value="">选择已有角色</option>
-                    {characters.map((c) => (
-                      <option key={c.slug} value={c.slug}>
-                        {c.name} {c.identity ? `(${c.identity})` : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleBind}
-                    disabled={!selectedChar}
-                    className="px-3 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-45 disabled:cursor-not-allowed shrink-0"
-                  >
-                    绑定
-                  </button>
-                </div>
-              ) : (
-                <div className="text-xs text-muted-foreground text-center">
-                  暂无角色，请先创建
-                </div>
-              )}
-            </div>
-          )}
+                {loadingChars ? (
+                  <div className="text-xs text-muted-foreground text-center">加载中...</div>
+                ) : characters.length > 0 ? (
+                  <div className="flex gap-1.5 items-center">
+                    <select
+                      className="flex-1 px-2 py-2 text-sm bg-bg text-fg border border-border rounded-sm min-w-0"
+                      value={selectedChar}
+                      onChange={(e) => setSelectedChar(e.target.value)}
+                    >
+                      <option value="">选择已有角色</option>
+                      {characters.map((c) => (
+                        <option key={c.slug} value={c.slug}>
+                          {c.name} {c.identity ? `(${c.identity})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleBind}
+                      disabled={!selectedChar}
+                      className="px-3 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-45 disabled:cursor-not-allowed shrink-0"
+                    >
+                      绑定
+                    </button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground text-center">
+                    暂无角色，请先创建
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </SbSection>
 
         <SbSection title="场景">

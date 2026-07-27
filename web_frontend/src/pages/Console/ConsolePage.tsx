@@ -9,6 +9,7 @@ interface TurnSummary {
   id: string;
   turn_no: number;
   parent_id: string | null;
+  parent_turn_no: number | null;
   sender: string;
   player_text: string;
   reply_preview: string;
@@ -30,11 +31,18 @@ export default function ConsolePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<MainTab>("sessions");
+  const [currentId, setCurrentId] = useState<string | null>(null);
+
+  const refreshTurns = () => {
+    apiGet<TurnSummary[]>("/api/sessions").then(setTurns).catch(() => {});
+  };
 
   useEffect(() => {
-    apiGet<TurnSummary[]>("/api/sessions")
-      .then(setTurns)
-      .catch((e) => setError(e.message));
+    refreshTurns();
+    // 获取当前活跃分支 head
+    apiGet<{ head_node_id: string | null }>("/api/sessions/branch/active")
+      .then((d) => setCurrentId(d.head_node_id))
+      .catch(() => {});
   }, []);
 
   return (
@@ -69,6 +77,7 @@ export default function ConsolePage() {
               selectedId={selectedId}
               onSelect={setSelectedId}
               error={error}
+              currentId={currentId}
             />
           </SbSection>
         )}
@@ -78,7 +87,12 @@ export default function ConsolePage() {
       <div className="flex-1 overflow-y-auto">
         {mainTab === "sessions" ? (
           selectedId ? (
-            <TurnDetailPanel turnId={selectedId} turns={turns} />
+            <TurnDetailPanel turnId={selectedId} turns={turns} isCurrent={selectedId === currentId} onBranchCreated={() => {
+              refreshTurns();
+              apiGet<{ head_node_id: string | null }>("/api/sessions/branch/active")
+                .then((d) => setCurrentId(d.head_node_id))
+                .catch(() => {});
+            }} />
           ) : (
             <p className="text-muted-foreground text-center pt-10">
               选择轮次查看详情

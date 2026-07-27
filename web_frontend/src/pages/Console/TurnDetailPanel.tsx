@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "../../api/client";
+import { apiGet, apiPost } from "../../api/client";
 
 interface ToolCallItem {
   id: string;
@@ -17,12 +17,16 @@ interface MessageItem {
 interface TurnDetail {
   id: string;
   turn_no: number;
+  parent_id: string | null;
+  parent_turn_no: number | null;
   messages: MessageItem[];
 }
 
 interface TurnDetailPanelProps {
   turnId: string;
   turns?: Array<{ id: string; turn_no: number; usage: Record<string, number> }>;
+  onBranchCreated?: () => void;
+  isCurrent?: boolean;
 }
 
 function fmtUsage(usage?: Record<string, number>): string {
@@ -48,19 +52,39 @@ function renderToolArgs(args: string): string {
   }
 }
 
-export default function TurnDetailPanel({ turnId, turns }: TurnDetailPanelProps) {
+export default function TurnDetailPanel({ turnId, turns, onBranchCreated, isCurrent }: TurnDetailPanelProps) {
   const [detail, setDetail] = useState<TurnDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [branching, setBranching] = useState(false);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     setError(null);
+    setDone(false);
     apiGet<TurnDetail>(`/api/sessions/${turnId}`)
       .then(setDetail)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [turnId]);
+
+  const handleBranch = async () => {
+    if (branching || done) return;
+    setBranching(true);
+    try {
+      const name = `从 #${String(detail?.turn_no ?? "?").padStart(3, "0")} 分支`;
+      const res: any = await apiPost("/api/sessions/branch", { from_node_id: turnId, name });
+      // 切换到新分支
+      await apiPost("/api/sessions/branch/switch", { branch_id: res.branch_id });
+      setDone(true);
+      onBranchCreated?.();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBranching(false);
+    }
+  };
 
   if (loading) return <div className="p-8 text-muted-foreground text-center">加载中...</div>;
   if (error) return <div className="p-8 text-error text-center">{error}</div>;
@@ -71,9 +95,33 @@ export default function TurnDetailPanel({ turnId, turns }: TurnDetailPanelProps)
 
   return (
     <div className="p-4">
-      <h2 className="font-heading text-h3 text-primary mb-1">
-        #{String(detail.turn_no).padStart(3, "0")}
-      </h2>
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2">
+          <h2 className="font-heading text-h3 text-primary">
+            #{String(detail.turn_no).padStart(3, "0")}
+          </h2>
+          <span className="text-xs text-muted-foreground">
+            ← {detail.parent_turn_no ? `#${String(detail.parent_turn_no).padStart(3, "0")}` : "根节点"}
+          </span>
+        </div>
+        {isCurrent ? (
+          <span className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-primary text-white">
+            当前位置
+          </span>
+        ) : (
+          <button
+            onClick={handleBranch}
+            disabled={branching || done}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+              done
+                ? "bg-success-container text-success cursor-default"
+                : "bg-primary text-white hover:bg-primary-hover disabled:opacity-40"
+            }`}
+          >
+            {done ? "✓ 已设为当前" : branching ? "处理中..." : "从此轮继续"}
+          </button>
+        )}
+      </div>
       {usageStr && (
         <div className="text-xs text-muted-foreground font-mono mb-4">
           {usageStr}
@@ -84,7 +132,6 @@ export default function TurnDetailPanel({ turnId, turns }: TurnDetailPanelProps)
         {detail.messages
           .filter((m) => m.role !== "system")
           .map((m, i) => {
-            // assistant 消息可能有 tool_calls
             if (m.role === "assistant" && m.tool_calls?.length) {
               return (
                 <div key={i} className="rounded-lg p-3 chat-bg-assistant border-l-[3px] border-l-success">
@@ -108,7 +155,6 @@ export default function TurnDetailPanel({ turnId, turns }: TurnDetailPanelProps)
               );
             }
 
-            // 其他消息
             return (
               <div
                 key={i}

@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Sidebar, SbTabs, SbTab, SbList, Button } from "../../components/ui";
-import EditorChat from "./EditorChat";
+import EditorAIPanel from "./EditorAIPanel";
 
 type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations";
 
@@ -18,7 +18,7 @@ const TABS: { key: ResourceKind; label: string }[] = [
   { key: "characters", label: "玩家角色" },
   { key: "npcs", label: "NPC" },
   { key: "items", label: "物品" },
-  { key: "scenes", label: "场景" },
+  { key: "scenes", label: "情境" },
   { key: "locations", label: "地点" },
 ];
 
@@ -27,7 +27,7 @@ const KIND_LABELS: Record<string, string> = {
   characters: "玩家角色",
   npcs: "NPC",
   items: "物品",
-  scenes: "场景",
+  scenes: "情境",
   locations: "地点",
 };
 
@@ -57,7 +57,6 @@ export default function EditorPage() {
   const [selectedBody, setSelectedBody] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showChat, setShowChat] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const [editMeta, setEditMeta] = useState<Record<string, string> | null>(null);
   const [editBody, setEditBody] = useState("");
@@ -205,17 +204,6 @@ export default function EditorPage() {
             );
           })}
         </SbList>
-
-        {/* AI 辅助创建按钮 — 侧边栏底部 */}
-        <div className="border-t border-border p-3">
-          <Button
-            variant="primary"
-            onClick={() => setShowChat(true)}
-            className="w-full"
-          >
-            创建{KIND_LABELS[activeTab]}
-          </Button>
-        </div>
       </Sidebar>
 
       {/* 右侧：详情 */}
@@ -238,7 +226,7 @@ export default function EditorPage() {
                 </div>
               ) : (
                 <Button size="sm" className="h-10" onClick={enterEdit}>
-                  编辑
+                  手动编辑
                 </Button>
               )}
             </div>
@@ -314,35 +302,8 @@ export default function EditorPage() {
           </div>
         )}
 
-        {/* AI 助手浮层 */}
-        {showChat && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-            <div className="bg-surface border border-border rounded-xl shadow-modal w-full max-w-lg max-h-[80vh] flex flex-col">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-                <h2 className="font-heading text-h4 font-heading text-fg">
-                  AI 辅助创建{KIND_LABELS[activeTab]}
-                </h2>
-                <button
-                  onClick={() => setShowChat(false)}
-                  className="text-muted-foreground hover:text-fg text-lg leading-none px-1"
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto">
-                <EditorChat
-                  kind={activeTab}
-                  onCreated={(slug) => {
-                    loadList(activeTab);
-                    setSelectedSlug(slug);
-                    loadDetail(activeTab, slug);
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+      <EditorAIPanel />
     </div>
   );
 }

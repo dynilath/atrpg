@@ -178,16 +178,16 @@ async def process_turn(input: TurnInput) -> TurnResult:
     # ── 构造本轮 messages ──
     history_body = [m for m in history if m.get("role") != "system"]
     if history_body:
-        messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user}]
+        reply_hint = "\n\n（处理完后必须调用 reply 工具发送回复。）"
+        messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user + reply_hint}]
     else:
+        reply_hint = (
+            "\n\n（首次对话。如需了解当前场景/在场者/已有弧光，"
+            "用 query_locations / query_memory 工具查询。处理完后**必须调用 reply 工具发送回复**。）"
+        )
         messages = [
             {"role": "system", "content": system_prefix},
-            {
-                "role": "user",
-                "content": turn_user
-                + "\n\n（首次对话。如需了解当前场景/在场者/已有弧光，"
-                "用 query_locations / query_memory 工具查询。你发送的消息不会被直接处理，**务必**使用 reply 工具发送消息。）",
-            },
+            {"role": "user", "content": turn_user + reply_hint},
         ]
 
     # ── 工具上下文 ──
@@ -228,13 +228,13 @@ async def process_turn(input: TurnInput) -> TurnResult:
         messages.append(llm.assistant_to_message(assistant))
 
         if not assistant.has_tool_calls:
-            # 模型收尾：必须通过 reply 工具发送内容
-            if assistant.content.strip() and not ctx.replied:
-                logger.warning(
-                    f"LLM 未调 reply 即停止，已丢弃内容 "
-                    f"({len(assistant.content)}chars): {assistant.content[:80]!r}"
-                )
-                ctx.replied = True  # 标记为已处理，避免后续重复处理
+            if not ctx.replied:
+                # 模型停止但没调 reply → 不丢弃，留给后续重试机制
+                if assistant.content.strip():
+                    logger.warning(
+                        f"LLM 未调 reply 即停止，content 待重试 "
+                        f"({len(assistant.content)}chars): {assistant.content[:80]!r}"
+                    )
             elif assistant.content.strip():
                 logger.warning(f"LLM reply 后又生成残留文本，已丢弃：{assistant.content[:80]!r}")
             break
@@ -248,6 +248,50 @@ async def process_turn(input: TurnInput) -> TurnResult:
         if not ctx.replied:
             result.error = "工具调用循环达到上限，强制收尾"
         logger.warning("工具调用循环达到上限，强制收尾")
+
+    # ── 重试：若本轮从未调 reply，注入提示让 AI 补刀 ──
+    if not ctx.replied:
+        retry_prompt = (
+            "（系统提示：你本轮尚未调用 reply 工具回复玩家。"
+            "请调用 reply(content=\"...\") 将你的回复内容发送给玩家。）"
+        )
+        messages.append({"role": "user", "content": retry_prompt})
+        logger.info(f"注入 reply 重试提示，messages={len(messages)}")
+
+        for _ in range(2):  # 重试最多 2 轮
+            try:
+                assistant = await llm.chat_with_tools(messages, schemas)
+            except Exception:
+                logger.exception("重试轮 LLM 调用失败")
+                break
+
+            u = assistant.usage
+            if u:
+                ctx.last_usage["prompt_tokens"] = ctx.last_usage.get("prompt_tokens", 0) + u.get("prompt_tokens", 0)
+                ctx.last_usage["completion_tokens"] = ctx.last_usage.get("completion_tokens", 0) + u.get("completion_tokens", 0)
+                ctx.last_usage["cached_tokens"] = ctx.last_usage.get("cached_tokens", 0) + u.get("cached_tokens", 0)
+
+            messages.append(llm.assistant_to_message(assistant))
+
+            if not assistant.has_tool_calls:
+                break
+
+            for call in assistant.tool_calls:
+                tool_result = await dispatch(ctx, call)
+                messages.append(llm.tool_result_message(call.id, tool_result))
+
+            if ctx.replied:
+                logger.info("重试成功：reply 已被调用")
+                break
+        else:
+            logger.warning("重试轮达到上限")
+
+        # 重试后仍未调 reply → 发送固定提示
+        if not ctx.replied and ctx.send_fn:
+            await ctx.send_fn("（AI 未生成回复，请重试）")
+            ctx.replied = True
+            ctx.reply_preview = "（AI 未生成回复，请重试）"
+            logger.warning("重试后 LLM 仍拒绝调 reply，已发送固定提示")
 
     # ── 提取发送人名用于快照 meta ──
     sender_name = ""

@@ -69,10 +69,10 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 
 @tool(
     "reply",
-    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、场景描写）。"
-    "这是发送玩家可见内容的**唯一出口**——所有要给玩家看的文本必须放在 content 参数里，"
-    "不要写在 assistant 消息正文然后传空参数，那会导致内容丢失。"
-    "长篇幅叙事可分多次 reply；每次 reply 的内容应自成一体，避免一句话拆一条。",
+    "【必须调用】向玩家发送消息，是唯一出口——不调 reply 玩家什么也看不到。"
+    "内容可包含演绎文本、NPC 台词、裁决结果、场景描写。"
+    "所有要给玩家看的文本必须放在 content 参数里，不要写在 assistant 消息正文然后传空参数。"
+    "长篇幅叙事可分多次 reply；每次应自成一体。",
     {
         "type": "object",
         "properties": {

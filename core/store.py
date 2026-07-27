@@ -222,7 +222,6 @@ class Store:
         "state-records",
         "terminology",
         "sessions",
-        "players",
     )
 
     def __init__(self, game_dir: str | Path):
@@ -578,10 +577,6 @@ class Store:
                 return slug if slug else None
             except Exception:
                 pass
-        # 兼容旧 data/players/
-        d = self.read("players", str(user_id))
-        if d and d[0].get("character_slug") and d[0].get("character_slug") != "none":
-            return d[0].get("character_slug")
         return None
 
     def bind_player(self, user_id: str, char_slug: str, display_name: str = "") -> None:

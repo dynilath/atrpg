@@ -69,10 +69,10 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 
 @tool(
     "reply",
-    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、镜头过场描写）。"
-    "这是把内容发到 QQ 群的唯一出口。**所有要给玩家看的文本必须放在 content 参数里**——"
-    "不要把演绎文本写在 assistant 消息正文（content 字段）然后调 reply 传空参数，"
-    "那会导致内容丢失。一轮只调一次 reply，把全部内容放进去。",
+    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、场景描写）。"
+    "这是发送玩家可见内容的**唯一出口**——所有要给玩家看的文本必须放在 content 参数里，"
+    "不要写在 assistant 消息正文然后传空参数，那会导致内容丢失。"
+    "长篇幅叙事可分多次 reply；每次 reply 的内容应自成一体，避免一句话拆一条。",
     {
         "type": "object",
         "properties": {
@@ -138,8 +138,9 @@ async def draft_character(
     if ctx.send_fn:
         await ctx.send_fn(card)
     return (
-        f"角色卡草案已落盘到 data/characters/{slug}.md（状态:待确认），角色卡已直接发送给玩家。"
-        "**不要再调用 reply**——角色卡已发出。等待玩家下一条消息回复确认后，调用 finalize_character 转为正式。"
+        f"角色卡草案已落盘到 data/characters/{slug}.md（状态:待确认）。"
+        f"角色卡可见摘要已直接发送给玩家（不含剧情钩子等内部信息）。"
+        "等待玩家下一条消息回复确认后，调用 finalize_character 转为正式。"
     )
 
 

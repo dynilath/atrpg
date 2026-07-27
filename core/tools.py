@@ -266,15 +266,16 @@ async def create_item(ctx: ToolContext, slug: str, name: str, description: str) 
 
 @tool(
     "create_scene",
-    "创建支撑剧情的情境并落盘到 data/scenes/。情境 = 地点 + 在场角色 + 事件背景，"
-    "不是地点本身——创建前确认已有对应地点（data/locations/）。用于过渡情境或玩家前往新地点时。",
+    "在某个地点内创建一段情景（连续事件片段）并落盘到 data/scenes/。"
+    "情景不是地点本身——必须先有对应地点（data/locations/）。"
+    "每个情景通过 location 字段关联到所属地点。用于玩家进入新区域或触发新事件时。",
     {
         "type": "object",
         "properties": {
-            "slug": {"type": "string", "description": "情境 slug"},
-            "name": {"type": "string", "description": "情境名称"},
-            "location": {"type": "string", "description": "所属地点 slug（必填，必须先有该地点）"},
-            "description": {"type": "string", "description": "生动的情境描写（含该地点当前发生的事情）"},
+            "slug": {"type": "string", "description": "情景 slug"},
+            "name": {"type": "string", "description": "情景名称"},
+            "location": {"type": "string", "description": "所属地点 slug（必填，须先存在）"},
+            "description": {"type": "string", "description": "生动的情景描写（含该地点当前发生的事情）"},
         },
         "required": ["slug", "name", "location", "description"],
     },
@@ -452,13 +453,14 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "", search: str 
 
 @tool(
     "query_locations",
-    "追踪角色位置与情景在场者。回答「某角色在哪」「某情景有谁」「所有角色位置」等问题。"
-    "裁决跨情景移动、判断角色能否互动时也应先查询。",
+    "查询角色/NPC所在的地点与情景。每个情景属于一个地点（如「简报室」情景属于「三角机构分部」地点）。"
+    "where_is 返回：地点 → 情景 → 同场者。who_in 返回：地点 → 情景 → 在场者。all 列出全部。"
+    "裁决跨情景移动、判断角色能否互动前先查询。",
     {
         "type": "object",
         "properties": {
-            "query_type": {"type": "string", "enum": ["where_is", "who_in", "all"], "description": "where_is=查某角色在哪；who_in=查某情景有哪些角色；all=列出所有角色位置"},
-            "char_slug": {"type": "string", "description": "where_is 时必填：要查的角色 slug"},
+            "query_type": {"type": "string", "enum": ["where_is", "who_in", "all"], "description": "where_is=查某角色在哪（返回地点+情景）；who_in=查某情景有谁（返回地点+情景）；all=列出所有角色位置"},
+            "char_slug": {"type": "string", "description": "where_is 时必填：要查的角色或 NPC slug"},
             "scene_slug": {"type": "string", "description": "who_in 时必填：要查的情景 slug"},
         },
         "required": ["query_type"],
@@ -484,15 +486,21 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
         for a in others:
             ad = ctx.store.read("characters", a) or ctx.store.read("npcs", a)
             other_names.append(ad[0].get("name", a) if ad else a)
-        lines = [
-            f"{char_slug} 当前在情景「{meta.get('name', loc)}」（{loc}）。",
-            f"情景描写：{body[:300]}",
-            f"同场：{'、'.join(other_names) if other_names else '无'}",
-        ]
+        lines = []
+        # 地点信息优先
         location_slug = meta.get("location")
         if location_slug:
-            loc_name = ctx.store.location_name(location_slug) or location_slug
-            lines.append(f"所属地点：{loc_name}（{location_slug}）")
+            loc_name = ctx.store.location_name(location_slug)
+            if loc_name:
+                lines.append(f"地点：{loc_name}（{location_slug}）")
+            else:
+                lines.append(f"地点：{location_slug}（档案缺失）")
+        else:
+            lines.append(f"地点：未设定")
+        # 情景信息
+        lines.append(f"情景：{meta.get('name', loc)}（{loc}）")
+        lines.append(f"情景描写：{body[:300]}")
+        lines.append(f"同场：{'、'.join(other_names) if other_names else '无'}")
         return "\n".join(lines)
     if query_type == "who_in":
         if not scene_slug:
@@ -500,10 +508,18 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
         chars, npcs = ctx.store.who_in_scene(scene_slug)
         d = ctx.store.read("scenes", scene_slug)
         name = d[0].get("name", scene_slug) if d else scene_slug
+        lines = []
+        location_slug = d[0].get("location") if d else None
+        if location_slug:
+            loc_name = ctx.store.location_name(location_slug) or location_slug
+            lines.append(f"地点：{loc_name}（{location_slug}）")
+        lines.append(f"情景：{name}（{scene_slug}）")
         all_attendees = chars + npcs
         if not all_attendees:
-            return f"情景「{name}」（{scene_slug}）当前无角色或 NPC 在场。"
-        return f"情景「{name}」（{scene_slug}）在场：{'、'.join(all_attendees)}"
+            lines.append("当前无角色或 NPC 在场。")
+        else:
+            lines.append(f"在场：{'、'.join(all_attendees)}")
+        return "\n".join(lines)
     if query_type == "all":
         locs = ctx.store.all_char_locations(ctx.group_id)
         if not locs:
@@ -523,10 +539,10 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
 
 @tool(
     "query_scene_state",
-    "查询某个地点的最新情景状态。当玩家返回之前离开的地点、切换到焦点外的场景、"
+    "查询某个地点的最新情景状态。当玩家返回之前离开的地点、切换到焦点外的情景、"
     "或需要知道某个地点'上次发生了什么'时调用。"
-    "根据文件名的日期时间排序，自动取最新镜头。"
-    "返回：镜头名称、游戏内时间、在场角色及其状态、最后发生的事件摘要。",
+    "按文件名日期时间排序，自动取最新情景。"
+    "返回：情景名称、游戏内时间、在场角色及其状态、最近事件摘要。",
     {
         "type": "object",
         "properties": {

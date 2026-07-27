@@ -66,6 +66,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
             }
             break;
           case "chat_msg":
+          case "broadcast_chat_msg":
             if (msg.payload) {
               const m = msg.payload;
               addMessage({

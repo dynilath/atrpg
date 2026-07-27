@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiGet } from "../../api/client";
 import { Sidebar, SbSection } from "../../components/ui";
 import TurnListPanel from "./TurnListPanel";
@@ -32,17 +32,43 @@ export default function ConsolePage() {
   const [error, setError] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<MainTab>("sessions");
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const refreshTurns = () => {
     apiGet<TurnSummary[]>("/api/sessions").then(setTurns).catch(() => {});
   };
 
+  const scrollSidebarToBottom = () => {
+    requestAnimationFrame(() => {
+      const el = document.querySelector('[data-sidebar="left"]');
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  };
+
   useEffect(() => {
     refreshTurns();
-    // 获取当前活跃分支 head
     apiGet<{ head_node_id: string | null }>("/api/sessions/branch/active")
       .then((d) => setCurrentId(d.head_node_id))
       .catch(() => {});
+
+    // 防止重复连接（React StrictMode 会双挂载）
+    if (wsRef.current) return;
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${protocol}//${location.host}/ws/console`);
+    wsRef.current = ws;
+    ws.onopen = () => console.log("控制台 WS 已连接");
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "new_turn") {
+          refreshTurns();
+          setCurrentId(msg.payload.id);
+          scrollSidebarToBottom();
+        }
+      } catch {}
+    };
+    ws.onclose = () => { console.log("控制台 WS 断开"); wsRef.current = null; };
+    return () => { ws.close(); wsRef.current = null; };
   }, []);
 
   return (

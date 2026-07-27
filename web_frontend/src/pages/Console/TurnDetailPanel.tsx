@@ -59,11 +59,12 @@ export default function TurnDetailPanel({ turnId, turns, onBranchCreated, isCurr
   const [error, setError] = useState<string | null>(null);
   const [branching, setBranching] = useState(false);
   const [done, setDone] = useState(false);
+  const [showFull, setShowFull] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
     setError(null);
     setDone(false);
+    setLoading(true);
     apiGet<TurnDetail>(`/api/sessions/${turnId}`)
       .then(setDetail)
       .catch((e) => setError(e.message))
@@ -124,13 +125,22 @@ export default function TurnDetailPanel({ turnId, turns, onBranchCreated, isCurr
         )}
       </div>
       {usageStr && (
-        <div className="text-xs text-muted-foreground font-mono mb-4">
+        <div className="text-xs text-muted-foreground font-mono mb-2">
           {usageStr}
         </div>
       )}
+      <label className="flex items-center gap-2 text-xs text-muted-foreground mb-4 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={showFull}
+          onChange={(e) => setShowFull(e.target.checked)}
+          className="w-3.5 h-3.5"
+        />
+        查看完整请求（{showFull ? detail.messages.length : detail.turn_messages.length} 条消息）
+      </label>
 
       <div className="space-y-3">
-        {detail.turn_messages
+        {(showFull ? detail.messages : detail.turn_messages)
           .map((m, i) => {
             if (m.role === "assistant" && m.tool_calls?.length) {
               return (

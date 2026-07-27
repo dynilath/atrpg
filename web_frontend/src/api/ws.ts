@@ -3,9 +3,10 @@
 开发模式下连接到同域 /ws/ 端点（由 FastAPI 代理处理）。
 */
 
-export function connectWs(sessionKey: string): WebSocket {
+export function connectWs(sessionKey: string, extraParams: Record<string, string> = {}): WebSocket {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  const url = `${protocol}//${location.host}/ws/${sessionKey}`;
+  const params = new URLSearchParams({ uid: sessionKey, ...extraParams });
+  const url = `${protocol}//${location.host}/ws/${sessionKey}?${params}`;
   const ws = new WebSocket(url);
 
   ws.onopen = () => {

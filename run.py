@@ -4,10 +4,11 @@ uvicorn 跑 FastAPI（Web API + WebSocket），始终运行。
 QQ Bot 在 server/qqbot.py 中通过 FastAPI lifespan 按需启动。
 
 用法：
-    python run.py                        # 启动
-    python run.py --game-dir <path>      # 指定游戏工作目录
-    python run.py --setup                # 强制重跑配置向导
-    python run.py --dist                 # 生产模式：服务 web_frontend/dist/
+    python run.py                             # 启动
+    python run.py --game-dir <path>           # 指定游戏工作目录
+    python run.py --log-file <path>           # 指定日志文件
+    python run.py --setup                     # 强制重跑配置向导
+    python run.py --dist                      # 生产模式：服务 web_frontend/dist/
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ def main() -> None:
     force_setup = "--setup" in sys.argv or "--reconfig" in sys.argv
     is_dist = "--dist" in sys.argv
     game_dir_override = _parse_cli_arg("--game-dir")
+    log_file_override = _parse_cli_arg("--log-file")
 
     if game_dir_override:
         import os
@@ -60,7 +62,7 @@ def main() -> None:
     log_level = sc.get("log_level", "INFO").upper()
 
     # ---- 统一日志系统 ----
-    _setup_logging(log_level)
+    _setup_logging(log_level, log_file_override)
 
     logger = logging.getLogger("atrpg")
 
@@ -94,19 +96,26 @@ def main() -> None:
     )
 
 
-def _setup_logging(level: str) -> None:
-    """配置统一日志系统：控制台 + 文件。"""
-    # 从 config.toml 读日志路径
+def _setup_logging(level: str, cli_log_file: str | None = None) -> None:
+    """配置统一日志系统：控制台 + 文件。
+
+    优先级：--log-file 参数 > config.toml server.log_file > logs/atrpg.log
+    """
     import tomllib
     log_file_path = _PROJECT_ROOT / "logs" / "atrpg.log"
-    try:
-        raw = tomllib.loads((_PROJECT_ROOT / "config.toml").read_text(encoding="utf-8"))
-        cfg_path = raw.get("server", {}).get("log_file", "")
-        if cfg_path:
-            p = Path(cfg_path)
-            log_file_path = p if p.is_absolute() else _PROJECT_ROOT / p
-    except Exception:
-        pass
+
+    if cli_log_file:
+        p = Path(cli_log_file)
+        log_file_path = p if p.is_absolute() else _PROJECT_ROOT / p
+    else:
+        try:
+            raw = tomllib.loads((_PROJECT_ROOT / "config.toml").read_text(encoding="utf-8"))
+            cfg_path = raw.get("server", {}).get("log_file", "")
+            if cfg_path:
+                p = Path(cfg_path)
+                log_file_path = p if p.is_absolute() else _PROJECT_ROOT / p
+        except Exception:
+            pass
 
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -124,15 +133,14 @@ def _setup_logging(level: str) -> None:
     ch.setFormatter(fmt)
     root.addHandler(ch)
 
-    # 文件：仅在直接运行时（非 PowerShell 管道）兜底写入
-    if sys.stdout.isatty():
-        try:
-            log_file_path.parent.mkdir(parents=True, exist_ok=True)
-            fh = logging.FileHandler(str(log_file_path), encoding="utf-8")
-            fh.setFormatter(fmt)
-            root.addHandler(fh)
-        except OSError:
-            pass  # 文件不可写时不影响控制台输出
+    # 文件：始终写入（不依赖 isatty，确保 UTF-8 编码）
+    try:
+        log_file_path.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(str(log_file_path), encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except OSError:
+        pass  # 文件不可写时不影响控制台输出
 
 
 def _uvicorn_log_config() -> dict:

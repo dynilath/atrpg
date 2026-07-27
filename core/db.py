@@ -183,6 +183,11 @@ def session_save_turn(
         }
         snap_path.write_text(json.dumps(snap, ensure_ascii=False), encoding="utf-8")
 
+        # 同时更新 current.json（供下轮 load_history 续接）
+        cur_path = root / ".atrpg" / "sessions" / "current.json"
+        cur_path.parent.mkdir(parents=True, exist_ok=True)
+        cur_path.write_text(json.dumps(messages, ensure_ascii=False), encoding="utf-8")
+
         # 新增树节点
         node_id = uuid.uuid4().hex
         # parent = 当前活跃分支的 head
@@ -369,12 +374,16 @@ def session_switch_branch(root: Path, branch_id: str) -> bool:
 
 
 def session_create_branch(root: Path, from_node_id: str, name: str | None = None) -> str | None:
-    """从指定节点创建新分支（回滚点），返回新分支 id。"""
+    """从指定节点创建新分支（回滚点），返回新分支 id。
+    
+    同时将 from_node 的快照消息恢复到 current.json，使下轮 LLM 续接从该点开始。
+    """
     import uuid
     db = _session_db(root)
     with sqlite3.connect(str(db)) as conn:
+        conn.row_factory = sqlite3.Row
         node = conn.execute(
-            "SELECT id, turn_no FROM tree_nodes WHERE id = ?", (from_node_id,)
+            "SELECT id, turn_no, snapshot_path FROM tree_nodes WHERE id = ?", (from_node_id,)
         ).fetchone()
         if not node:
             return None
@@ -387,7 +396,24 @@ def session_create_branch(root: Path, from_node_id: str, name: str | None = None
         )
         conn.execute("UPDATE active_branch SET branch_id = ? WHERE id = 1", (branch_id,))
         conn.commit()
-        logger.info(f"session create branch: {branch_name} ({branch_id}) from node {from_node_id[:8]}")
+
+        # 恢复快照到 current.json
+        snap_path = Path(node["snapshot_path"])
+        if snap_path.exists():
+            import json as _json
+            snap = _json.loads(snap_path.read_text(encoding="utf-8"))
+            snap_msgs = snap.get("messages", [])
+            # 写回 .atrpg/sessions/current.json
+            cur = root / ".atrpg" / "sessions" / "current.json"
+            cur.parent.mkdir(parents=True, exist_ok=True)
+            cur.write_text(_json.dumps(snap_msgs, ensure_ascii=False), encoding="utf-8")
+            logger.info(
+                f"session create branch: {branch_name} ({branch_id}) from node {from_node_id[:8]} "
+                f"恢复 {len(snap_msgs)} 条消息到 current.json"
+            )
+        else:
+            logger.warning(f"branch from {from_node_id[:8]}: snapshot 不存在 {snap_path}")
+
         return branch_id
 
 

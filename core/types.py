@@ -51,4 +51,5 @@ class TurnResult:
     reply_preview: str = ""
     usage: dict[str, int] = field(default_factory=dict)
     messages: list[dict[str, Any]] = field(default_factory=list)
+    turn_messages: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""

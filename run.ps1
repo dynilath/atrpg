@@ -126,11 +126,11 @@ if ($isDist) { $passArgs += '--dist' }
 if ($GameDir) { $passArgs += '--game-dir'; $passArgs += $GameDir }
 
 $backendJob = Start-Job -ScriptBlock {
-    param($py, $root, $log, $pyArgs)
+    param($py, $root, $pyArgs)
     $env:PYTHONPATH = $root
     Set-Location $root
-    & $py run.py @pyArgs *>&1 | Out-File -FilePath $log -Append -Encoding UTF8
-} -ArgumentList $python, $PSScriptRoot, $logFile, $passArgs
+    & $py run.py @pyArgs
+} -ArgumentList $python, $PSScriptRoot, $passArgs
 
 # ---- 等后端就绪 ----
 Write-Host '  等待后端就绪...'
@@ -196,7 +196,6 @@ try {
     Write-Host ''
     Write-Host '[ATRPG] 停止后端...' -ForegroundColor Yellow
     Stop-Job $backendJob -ErrorAction SilentlyContinue
-    Receive-Job $backendJob -ErrorAction SilentlyContinue | Add-Content -Path $logFile -Encoding UTF8
     Remove-Job $backendJob -ErrorAction SilentlyContinue
     Write-Host '[ATRPG] 已停止' -ForegroundColor Cyan
 }

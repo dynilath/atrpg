@@ -194,7 +194,7 @@ class QQBotManager:
         if chat_msg:
             from .routes.dispatcher import broadcast as _bc
             try:
-                await _bc({"type": "chat_msg", "payload": chat_msg})
+                await _bc({"type": "broadcast_chat_msg", "payload": chat_msg})
             except Exception:
                 pass
 
@@ -244,13 +244,13 @@ class QQBotManager:
             if bot_msg:
                 from .routes.dispatcher import broadcast as _bc
                 try:
-                    await _bc({"type": "chat_msg", "payload": bot_msg})
+                    await _bc({"type": "broadcast_chat_msg", "payload": bot_msg})
                 except Exception:
                     pass
 
         # 保存会话快照
         if result.messages:
-            _db.session_save_turn(
+            node = _db.session_save_turn(
                 store.root, result.messages,
                 meta={
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
@@ -258,8 +258,27 @@ class QQBotManager:
                     "player_text": text[:120],
                     "reply_preview": result.reply_preview,
                     "usage": result.usage,
+                    "turn_messages": result.turn_messages,
                 },
             )
+            if node:
+                from .routes.dispatcher import broadcast as _bc2
+                try:
+                    await _bc2({
+                        "type": "new_turn",
+                        "payload": {
+                            "id": node["id"],
+                            "turn_no": node["turn_no"],
+                            "sender": member_openid[:8],
+                            "player_text": text[:120],
+                            "reply_preview": result.reply_preview,
+                            "usage": result.usage,
+                            "branch_id": node["branch_id"],
+                            "parent_id": node["parent_id"],
+                        },
+                    })
+                except Exception:
+                    pass
 
         if not result.replied:
             msg = result.error or "..."
@@ -373,6 +392,7 @@ class QQBotManager:
                     "player_text": text[:120],
                     "reply_preview": result.reply_preview,
                     "usage": result.usage,
+                    "turn_messages": result.turn_messages,
                 },
             )
         except Exception:

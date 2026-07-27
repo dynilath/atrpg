@@ -17,6 +17,7 @@ export default function Sidebar({
   return (
     <aside
       className={`w-80 min-w-80 bg-surface-container-low flex flex-col ${borderCls} border-border ${className}`.trim()}
+      data-sidebar={side}
       {...rest}
     >
       {children}

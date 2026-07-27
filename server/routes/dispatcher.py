@@ -20,10 +20,12 @@ logger = logging.getLogger(__name__)
 
 # 所有活跃 WebSocket 连接: uid -> list[WebSocket]
 _active_connections: dict[str, list[Any]] = {}
+# 控制台监控连接（不参与游戏消息）
+_console_connections: list[Any] = []
 
 
 async def broadcast(msg: dict) -> None:
-    """向所有 WebSocket 连接广播一条消息。"""
+    """向所有 WebSocket 连接（含控制台）广播一条消息。"""
     dead: list[tuple[str, Any]] = []
     for uid, socks in _active_connections.items():
         for ws in socks:
@@ -34,6 +36,18 @@ async def broadcast(msg: dict) -> None:
     for uid, ws in dead:
         try:
             _active_connections.get(uid, []).remove(ws)
+        except ValueError:
+            pass
+    # 也发给控制台连接
+    dead_console: list[Any] = []
+    for ws in _console_connections:
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            dead_console.append(ws)
+    for ws in dead_console:
+        try:
+            _console_connections.remove(ws)
         except ValueError:
             pass
 

@@ -373,18 +373,18 @@ class Store:
         return self.root / ".atrpg" / "history" / session_key
 
     def load_history(self, session_key: str) -> list[dict[str, Any]]:
-        """加载某会话的 LLM 对话历史（从 current.json）。不存在返回空列表。
-
-        加载时清洗孤立 tool 消息。
-        """
+        """加载对话历史：从 .atrpg/sessions/current.json（由 session_save_turn 维护）。"""
         import json
-        cur = self._session_dir(session_key) / "current.json"
+        # 统一使用 sessions 目录，不再维护 .atrpg/history/
+        cur = self.root / ".atrpg" / "sessions" / "current.json"
         if not cur.exists():
+            logger.info(f"load_history: current.json 不存在（首轮或未初始化）")
             return []
         try:
             msgs = json.loads(cur.read_text(encoding="utf-8"))
-            logger.debug(f"store load_history: {session_key} msgs={len(msgs)}")
+            logger.info(f"load_history: {len(msgs)}条")
         except (json.JSONDecodeError, OSError):
+            logger.warning("load_history: JSON解析失败")
             return []
         return self._clean_messages(msgs)
 
@@ -462,9 +462,11 @@ class Store:
             )
             # current.json：截断版（供下轮 LLM 续接）
             cur = sdir / "current.json"
-            cur.write_text(json.dumps(self._truncate(messages), ensure_ascii=False), encoding="utf-8")
-        logger.debug(
-            f"store save_history: {session_key} turn={turn_no} msgs={len(messages)}"
+            truncated = self._truncate(messages)
+            cur.write_text(json.dumps(truncated, ensure_ascii=False), encoding="utf-8")
+        logger.info(
+            f"save_history: {session_key} turn={turn_no} full={len(messages)} "
+            f"truncated={len(truncated)} path={cur}"
         )
 
     def list_sessions(self) -> list[str]:

@@ -144,7 +144,7 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                 root = Path(cfg2.game_dir)
                 chat_msg = _db.chat_append(root, sender_name, text, source="web")
                 # 广播给所有连接
-                await broadcast({"type": "chat_msg", "payload": chat_msg})
+                await broadcast({"type": "broadcast_chat_msg", "payload": chat_msg})
             except Exception as e:
                 logger.exception("聊天室写入失败")
                 await websocket.send_json({"type": "error", "payload": {"message": f"聊天室写入失败: {e}"}})
@@ -187,14 +187,14 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                 try:
                     full_text = "".join(full_reply)
                     bot_msg = _db.chat_append(root, "主持人", full_text, source="bot")
-                    await broadcast({"type": "chat_msg", "payload": bot_msg})
+                    await broadcast({"type": "broadcast_chat_msg", "payload": bot_msg})
                 except Exception:
                     logger.warning("Bot 回复写入聊天室失败", exc_info=True)
 
             # 保存 LLM 会话快照
             try:
                 if result.messages:
-                    _db.session_save_turn(
+                    node = _db.session_save_turn(
                         root,
                         result.messages,
                         meta={
@@ -203,8 +203,24 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                             "player_text": text[:120],
                             "reply_preview": result.reply_preview,
                             "usage": result.usage,
+                            "turn_messages": result.turn_messages,
                         },
                     )
+                    # 通知所有 WS 客户端（控制台刷新）
+                    if node:
+                        await broadcast({
+                            "type": "new_turn",
+                            "payload": {
+                                "id": node["id"],
+                                "turn_no": node["turn_no"],
+                                "sender": user_display_name,
+                                "player_text": text[:120],
+                                "reply_preview": result.reply_preview,
+                                "usage": result.usage,
+                                "branch_id": node["branch_id"],
+                                "parent_id": node["parent_id"],
+                            },
+                        })
             except Exception:
                 logger.warning("会话快照保存失败", exc_info=True)
 
@@ -235,4 +251,32 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
         try:
             await websocket.close()
         except Exception:
+            pass
+
+
+@router.websocket("/console")
+async def console_ws(websocket: WebSocket):
+    """WebSocket 端点：控制台监控，只接收广播，不处理游戏消息。"""
+    await websocket.accept()
+    logger.info("WS 控制台连接")
+    from .dispatcher import _console_connections
+    _console_connections.append(websocket)
+    try:
+        while True:
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"type": "heartbeat"})
+                except Exception:
+                    break
+                continue
+            if raw == "ping":
+                await websocket.send_json({"type": "pong"})
+    except Exception:
+        pass
+    finally:
+        try:
+            _console_connections.remove(websocket)
+        except ValueError:
             pass

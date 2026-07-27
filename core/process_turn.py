@@ -232,6 +232,10 @@ async def process_turn(input: TurnInput) -> TurnResult:
     # ── 加载对话历史 ──
     session_key = input.session_key
     history = s.load_history(session_key)
+    logger.info(
+        f"加载历史: session={session_key} history_len={len(history)} "
+        f"has_body={bool([m for m in history if m.get('role') != 'system'])}"
+    )
 
     # ── 构造 system 前缀（每轮刷新，世界书可能更新）──
     system_prefix = _load_system_prefix(s, input.mode)
@@ -242,8 +246,8 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
     # ── 构造本轮 messages ──
     history_body = [m for m in history if m.get("role") != "system"]
+    reply_hint = "\n\n（处理完后必须调用 reply 工具发送回复。）"
     if history_body:
-        reply_hint = "\n\n（处理完后必须调用 reply 工具发送回复。）"
         messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user + reply_hint}]
     else:
         reply_hint = (
@@ -255,6 +259,9 @@ async def process_turn(input: TurnInput) -> TurnResult:
             {"role": "user", "content": turn_user + reply_hint},
         ]
 
+    # ── 记录本轮 user 消息在 messages 中的位置（用于提取增量）──
+    turn_user_idx = len(messages) - 1  # turn_user 总是在 messages 末尾
+
     # ── 工具上下文 ──
     ctx = ToolContext(
         store=s,
@@ -263,9 +270,6 @@ async def process_turn(input: TurnInput) -> TurnResult:
         raw_text=input.text,
         send_fn=input.send_fn,
     )
-
-    # ── 记录本轮消息起点（用于提取增量）──
-    turn_start_idx = len(messages)
 
     # ── 工具调用循环（流式：reply 工具被调用时立即发送）──
     schemas = tool_schemas()
@@ -364,19 +368,30 @@ async def process_turn(input: TurnInput) -> TurnResult:
     if 'sender="' in _sf:
         sender_name = _sf.split('sender="', 1)[1].split('"', 1)[0]
 
+    # ── 计算本轮增量消息用于快照（不含 system 前缀）──
+    stored_messages = messages[1:]  # 剥离 system，只存对话部分
+    turn_delta = stored_messages[turn_user_idx - 1:]  # turn_user_idx 含 system，减 1 对齐
+
+    logger.info(
+        f"快照准备: total_msgs={len(messages)} stored={len(stored_messages)} "
+        f"turn_user_idx={turn_user_idx} delta={len(turn_delta)} "
+        f"delta_roles={[m['role'] for m in turn_delta[:3]]}"
+    )
+
     meta = {
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "sender": sender_name,
         "player_text": input.text[:120],
         "reply_preview": ctx.reply_preview,
         "usage": ctx.last_usage,
-        "turn_messages": messages[turn_start_idx:],  # 本轮增量消息
+        "turn_messages": turn_delta,
     }
 
     # ── 填充结果 ──
     result.replied = ctx.replied
     result.reply_preview = ctx.reply_preview
     result.usage = ctx.last_usage
-    result.messages = messages
+    result.messages = stored_messages
+    result.turn_messages = turn_delta
 
     return result

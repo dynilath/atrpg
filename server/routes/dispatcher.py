@@ -74,9 +74,9 @@ def record_user_msg(root: Path, sender: str, text: str, source: str = "web") -> 
 
 def record_bot_msg(root: Path, text: str) -> dict:
     """记录机器人回复到 chat.db 并返回消息对象。"""
-    return _db.chat_append(root, "主持人", text, source="bot")
+    return _db.chat_append(root, "host", text, source="bot")
 
 
 def record_system_msg(root: Path, text: str) -> dict:
-    """记录系统消息到 chat.db 并返回消息对象。"""
-    return _db.chat_append(root, "系统", text, source="system")
+    """记录系统消息到 chat.db。"""
+    return _db.chat_append(root, "system", text, source="system")

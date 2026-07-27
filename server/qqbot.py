@@ -186,12 +186,14 @@ class QQBotManager:
 
         logger.info(f"QQ群消息: group={group_id} user={member_openid} text={text[:60]!r}")
 
-        # 构造发送者名称（含角色信息）
-        sender_name = self._sender_name(store, member_openid)
+        # 构造发送者名称
+        sender_name, char_slug = self._sender_name(store, member_openid)
 
         # 写入统一聊天记录 + 广播 WS
         chat_msg = _db.chat_append(store.root, sender_name, text, source="qq")
         if chat_msg:
+            if char_slug:
+                chat_msg["character"] = char_slug
             from .routes.dispatcher import broadcast as _bc
             try:
                 await _bc({"type": "broadcast_chat_msg", "payload": chat_msg})
@@ -240,7 +242,7 @@ class QQBotManager:
         # 写入 AI 回复 + 广播 WS
         if result.replied and full_reply:
             reply_text = "".join(full_reply)
-            bot_msg = _db.chat_append(store.root, "主持人", reply_text, source="bot")
+            bot_msg = _db.chat_append(store.root, "host", reply_text, source="bot")
             if bot_msg:
                 from .routes.dispatcher import broadcast as _bc
                 try:
@@ -336,14 +338,14 @@ class QQBotManager:
 
     # ---- 辅助 ----
 
-    def _sender_name(self, store: Store, member_openid: str) -> str:
-        """构造发送者名称（含角色绑定信息）。"""
+    def _sender_name(self, store: Store, member_openid: str) -> tuple[str, str | None]:
+        """返回 (显示名, 角色slug)。"""
         char_slug = store.player_binding(member_openid)
         if char_slug and char_slug != "none":
             d = store.read("characters", char_slug)
             name = d[0].get("name", char_slug) if d else char_slug
-            return f"{name}（QQ:{member_openid[:8]}）"
-        return f"QQ:{member_openid[:8]}"
+            return (name, char_slug)
+        return (f"QQ:{member_openid[:8]}", None)
 
     async def _handle_unbind(self, store: Store, member_openid: str) -> str:
         """解除 QQ 用户与角色的绑定。"""
@@ -378,7 +380,7 @@ class QQBotManager:
 
     def _record_bot_reply(self, root: Path, full_text: str):
         try:
-            _db.chat_append(root, "主持人", full_text, source="bot")
+            _db.chat_append(root, "host", full_text, source="bot")
         except Exception:
             pass
 

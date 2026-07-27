@@ -8,6 +8,7 @@ export interface ChatMessage {
   content: string;
   timestamp: number;
   sender?: string;
+  character?: string;  // 角色 slug（仅已绑定角色的消息）
   source?: string;  // "web" | "qq" | "bot" | "system"
 }
 

@@ -136,14 +136,15 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                 user_char_slug = _read_user_char_slug(user_provider, user_openid)
 
             # 构造发送者名称
-            sender_name = f"{user_char_slug}（{user_display_name}）" if user_char_slug else user_display_name
+            sender_name = user_display_name
 
             # 写聊天室
             try:
                 cfg2 = get_config()
                 root = Path(cfg2.game_dir)
                 chat_msg = _db.chat_append(root, sender_name, text, source="web")
-                # 广播给所有连接
+                if user_char_slug:
+                    chat_msg["character"] = user_char_slug
                 await broadcast({"type": "broadcast_chat_msg", "payload": chat_msg})
             except Exception as e:
                 logger.exception("聊天室写入失败")
@@ -186,7 +187,7 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
             if result.replied and full_reply:
                 try:
                     full_text = "".join(full_reply)
-                    bot_msg = _db.chat_append(root, "主持人", full_text, source="bot")
+                    bot_msg = _db.chat_append(root, "host", full_text, source="bot")
                     await broadcast({"type": "broadcast_chat_msg", "payload": bot_msg})
                 except Exception:
                     logger.warning("Bot 回复写入聊天室失败", exc_info=True)

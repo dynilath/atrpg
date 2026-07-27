@@ -54,12 +54,13 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
             break;
           case "chat_history":
             if (msg.payload?.messages) {
-              const chatMsgs = msg.payload.messages.map((m: { id: number; ts: string; sender: string; text: string; source: string }) => ({
+              const chatMsgs = msg.payload.messages.map((m: { id: number; ts: string; sender: string; text: string; source: string; character?: string }) => ({
                 id: `chat-${m.id}`,
                 role: srcToRole(m.source),
                 content: m.text,
                 timestamp: new Date(m.ts).getTime(),
                 sender: m.sender,
+                character: m.character,
                 source: m.source,
               }));
               addMessages(chatMsgs);
@@ -75,6 +76,7 @@ export function useGameSocket(options: UseGameSocketOptions = {}) {
                 content: m.text,
                 timestamp: new Date(m.ts).getTime(),
                 sender: m.sender,
+                character: m.character,
                 source: m.source,
               });
             }

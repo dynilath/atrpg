@@ -89,13 +89,13 @@ def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_
 
     if effective_slug:
         d = s.read("characters", effective_slug)
-        char_name = d[0].get("姓名", effective_slug) if d else effective_slug
-        char_identity = d[0].get("身份", "") if d else ""
+        char_name = d[0].get("name", effective_slug) if d else effective_slug
+        char_identity = d[0].get("identity", "") if d else ""
         scene_slug = s.char_scene(group_id, effective_slug)
         scene_name = ""
         if scene_slug:
             sd = s.read("scenes", scene_slug)
-            scene_name = sd[0].get("名称", scene_slug) if sd else scene_slug
+            scene_name = sd[0].get("name", scene_slug) if sd else scene_slug
         loc = f" | 当前场景: {scene_name}" if scene_name else ""
         ident = f"（{char_identity}）" if char_identity else ""
         return f'<turn sender="{char_name}" char="{effective_slug}"{loc}>\n状态: 已绑定角色{ident}'
@@ -103,7 +103,7 @@ def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_
         pending = _find_pending_char(s, member_openid)
         if pending:
             pd = s.read("characters", pending)
-            pname = pd[0].get("姓名", pending) if pd else pending
+            pname = pd[0].get("name", pending) if pd else pending
             return (
                 f'<turn sender="未绑定玩家" pending_char="{pending}">\n'
                 f'状态: 有待确认角色卡「{pname}」，若玩家确认则 finalize_character'
@@ -114,7 +114,7 @@ def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_
 def _find_pending_char(s: store.Store, member_openid: str) -> str | None:
     """查找某玩家的待确认角色草案 slug。"""
     for d in s.list_docs("characters"):
-        if d["meta"].get("状态") == "待确认" and d["meta"].get("owner_openid") == member_openid:
+        if d["meta"].get("status") == "待确认" and d["meta"].get("owner_openid") == member_openid:
             return d["slug"]
     return None
 

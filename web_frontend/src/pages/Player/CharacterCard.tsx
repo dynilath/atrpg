@@ -28,9 +28,9 @@ export default function CharacterCard({ onUnbind }: CharacterCardProps) {
       .then((data) => {
         if (cancelled) return;
         setChar({
-          name: data.meta?.name || data.meta?.姓名 || data.meta?.名称 || charSlug,
-          identity: data.meta?.brief || data.meta?.身份 || "",
-          scene_slug: data.meta?.当前场景 || null,
+          name: data.meta?.name || data.meta?.title || charSlug,
+          identity: data.meta?.brief || data.meta?.identity || "",
+          scene_slug: data.meta?.current_scene || null,
         });
       })
       .catch(() => { if (!cancelled) setChar(null); })

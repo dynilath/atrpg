@@ -86,8 +86,8 @@ async def _llm_generate_structured(
     existing_docs = store.list_docs(kind)
     existing_summary_lines = [f"已有 {len(existing_docs)} 条："]
     for d in existing_docs[:20]:  # 最多展示 20 条
-        name = d["meta"].get("名称") or d["meta"].get("姓名") or d["slug"]
-        extra = d["meta"].get("级别") or d["meta"].get("身份") or ""
+        name = d["meta"].get("name") or d["slug"]
+        extra = d["meta"].get("level") or d["meta"].get("identity") or ""
         existing_summary_lines.append(f"- {d['slug']}: {name}" + (f" ({extra})" if extra else ""))
     existing_summary = "\n".join(existing_summary_lines)
 
@@ -104,8 +104,8 @@ async def _llm_generate_structured(
         f"\n## 输出格式（必须遵守）\n\n"
         f"你必须严格按以下格式输出，用 --- 分隔 YAML frontmatter 和 Markdown 正文：\n\n"
         f"---\n"
-        f"名称: <中文名称>\n"
-        f"<其他YAML元数据字段，每行一个键值对>\n"
+        f"名称: <英文名称/name>\n"
+        f"<其他YAML元数据字段，使用英文字段名，每行一个键值对，如：type/identity/nature/level 等>\n"
         f"---\n"
         f"\n"
         f"<Markdown 正文内容>\n"
@@ -120,7 +120,7 @@ async def _llm_generate_structured(
 
     # 从 AI 输出中提取名称并生成 slug（忽略 AI 提供的 slug，系统自动处理）
     title = (
-        meta.get("名称") or meta.get("姓名") or meta.get("标题")
+        meta.get("name") or meta.get("title")
         or slugify(user_prompt[:60])
     )
     slug = slugify(title)
@@ -130,7 +130,7 @@ async def _llm_generate_structured(
     meta.pop("updated", None)
 
     if not meta:
-        return {"slug": slug, "meta": {"名称": title}, "body": full_response, "title": title}
+        return {"slug": slug, "meta": {"name": title}, "body": full_response, "title": title}
 
     return {"slug": slug, "meta": meta, "body": body, "title": title}
 
@@ -172,11 +172,11 @@ async def create_arc(body: dict[str, Any]):
             return JSONResponse({"error": "LLM 生成失败"}, status_code=500)
         # 补全弧光特有字段
         meta = result["meta"]
-        meta.setdefault("级别", "单局")
-        meta.setdefault("规划者", "备团用户")
-        meta.setdefault("来源", "备团编辑")
-        meta.setdefault("当前阶段", "启程")
-        meta.setdefault("状态", "草案")
+        meta.setdefault("level", "单局")
+        meta.setdefault("planner", "备团用户")
+        meta.setdefault("source", "备团编辑")
+        meta.setdefault("current_stage", "启程")
+        meta.setdefault("status", "草案")
         p = s.write("story-arcs", result["slug"], meta, result["body"])
         logger.info(f"编辑助手创建弧光: {result['slug']}")
         return JSONResponse({
@@ -261,8 +261,8 @@ async def create_character(body: dict[str, Any]):
         if not result:
             return JSONResponse({"error": "LLM 生成失败"}, status_code=500)
         meta = result["meta"]
-        meta.setdefault("类型", "玩家角色" if char_type == "pc" else "NPC")
-        meta.setdefault("状态", "正式" if char_type == "npc" else "待确认")
+        meta.setdefault("type", "玩家角色" if char_type == "pc" else "NPC")
+        meta.setdefault("status", "正式" if char_type == "npc" else "待确认")
         p = s.write(kind, result["slug"], meta, result["body"])
         logger.info(f"编辑助手创建{kind}: {result['slug']}")
         return JSONResponse({
@@ -300,7 +300,7 @@ async def create_item(body: dict[str, Any]):
         if not result:
             return JSONResponse({"error": "LLM 生成失败"}, status_code=500)
         meta = result["meta"]
-        meta.setdefault("性质", "支撑剧情")
+        meta.setdefault("nature", "支撑剧情")
         p = s.write("items", result["slug"], meta, result["body"])
         logger.info(f"编辑助手创建物品: {result['slug']}")
         return JSONResponse({
@@ -337,8 +337,8 @@ async def create_scene(body: dict[str, Any]):
         if not result:
             return JSONResponse({"error": "LLM 生成失败"}, status_code=500)
         meta = result["meta"]
-        meta.setdefault("性质", "支撑剧情 / 可回收")
-        meta.setdefault("在场者", [])
+        meta.setdefault("nature", "支撑剧情 / 可回收")
+        meta.setdefault("attendees", [])
         p = s.write("scenes", result["slug"], meta, result["body"])
         logger.info(f"编辑助手创建场景: {result['slug']}")
         return JSONResponse({
@@ -410,7 +410,7 @@ async def create_terminology(body: dict[str, Any]):
         if not result:
             return JSONResponse({"error": "LLM 生成失败"}, status_code=500)
         meta = result["meta"]
-        meta.setdefault("类别", "其他")
+        meta.setdefault("category", "其他")
         p = s.write("terminology", result["slug"], meta, result["body"])
         logger.info(f"编辑助手创建术语: {result['slug']}")
         return JSONResponse({
@@ -513,8 +513,8 @@ def _build_existing_summary(s) -> str:
         if docs:
             lines.append(f"\n### {kind} ({len(docs)} 条)")
             for d in docs[:10]:
-                name = d["meta"].get("名称") or d["meta"].get("姓名") or d["meta"].get("术语") or d["slug"]
-                extra = d["meta"].get("级别") or d["meta"].get("身份") or d["meta"].get("类别") or ""
+                name = d["meta"].get("name") or d["meta"].get("term") or d["slug"]
+                extra = d["meta"].get("level") or d["meta"].get("identity") or d["meta"].get("category") or ""
                 lines.append(f"- {d['slug']}: {name}" + (f" ({extra})" if extra else ""))
     return "\n".join(lines) if lines else "暂无已有内容"
 

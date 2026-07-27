@@ -322,7 +322,7 @@ class QQBotManager:
         char_slug = store.player_binding(member_openid)
         if char_slug and char_slug != "none":
             d = store.read("characters", char_slug)
-            name = d[0].get("姓名", char_slug) if d else char_slug
+            name = d[0].get("name", char_slug) if d else char_slug
             return f"QQ:{name}"
         return f"QQ:{member_openid[:8]}"
 

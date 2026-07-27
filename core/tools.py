@@ -128,7 +128,7 @@ async def draft_character(
     char_body = _render_character_body(draft)
     ctx.store.write(
         "characters", slug,
-        {"姓名": name, "类型": "玩家角色", "身份": identity, "状态": "待确认",
+        {"name": name, "type": "玩家角色", "identity": identity, "status": "待确认",
          "slug": slug, "owner_openid": ctx.member_openid},
         char_body,
     )
@@ -160,25 +160,25 @@ async def finalize_character(ctx: ToolContext, char_slug: str, scene_slug: str) 
     if d is None:
         return f"错误：角色 '{char_slug}' 不存在。请先用 draft_character 生成草案。"
     meta, body = d
-    if meta.get("状态") != "待确认":
-        return f"错误：角色 '{char_slug}' 状态为「{meta.get('状态')}」，不是待确认草案。"
+    if meta.get("status") != "待确认":
+        return f"错误：角色 '{char_slug}' 状态为「{meta.get('status')}」，不是待确认草案。"
 
     scene = ctx.store.read("scenes", scene_slug)
     if scene is None:
         return f"错误：场景 '{scene_slug}' 不存在。请用 query_memory 查可用场景或 create_scene 新建。"
 
-    meta["状态"] = "正式"
+    meta["status"] = "正式"
     ctx.store.write("characters", char_slug, meta, body)
-    ctx.store.bind_player(ctx.member_openid, char_slug, meta.get("姓名", char_slug))
+    ctx.store.bind_player(ctx.member_openid, char_slug, meta.get("name", char_slug))
     ctx.store.set_char_scene(ctx.group_id, char_slug, scene_slug)
     scene_meta, _ = scene
     _append_attendee(ctx.store, scene_slug, char_slug)
     if ctx.send_fn:
         await ctx.send_fn(
             f"✓ 角色已转正式并绑定：data/characters/{char_slug}.md\n"
-            f"✓ 初始场景：{scene_meta.get('名称', scene_slug)}"
+            f"✓ 初始场景：{scene_meta.get('name', scene_slug)}"
         )
-    return f"角色 {meta.get('姓名', char_slug)}（{char_slug}）已正式落盘并绑定，初始场景 {scene_slug}。"
+    return f"角色 {meta.get('name', char_slug)}（{char_slug}）已正式落盘并绑定，初始场景 {scene_slug}。"
 
 
 @tool(
@@ -245,7 +245,7 @@ async def move_character_scene(ctx: ToolContext, char_slug: str, new_scene_slug:
 )
 async def create_npc(ctx: ToolContext, slug: str, name: str, identity: str, description: str) -> str:
     body = f"## {name}\n\n- **身份**：{identity}\n\n{description}\n"
-    ctx.store.write("npcs", slug, {"名称": name, "身份": identity, "性质": "支撑剧情", "slug": slug}, body)
+    ctx.store.write("npcs", slug, {"name": name, "identity": identity, "nature": "支撑剧情", "slug": slug}, body)
     return f"NPC {name}（{slug}）已落盘：data/npcs/{slug}.md"
 
 
@@ -263,7 +263,7 @@ async def create_npc(ctx: ToolContext, slug: str, name: str, identity: str, desc
     },
 )
 async def create_item(ctx: ToolContext, slug: str, name: str, description: str) -> str:
-    ctx.store.write("items", slug, {"名称": name, "性质": "支撑剧情", "slug": slug}, f"## {name}\n\n{description}\n")
+    ctx.store.write("items", slug, {"name": name, "nature": "支撑剧情", "slug": slug}, f"## {name}\n\n{description}\n")
     return f"道具 {name}（{slug}）已落盘：data/items/{slug}.md"
 
 
@@ -284,7 +284,7 @@ async def create_item(ctx: ToolContext, slug: str, name: str, description: str) 
 )
 async def create_scene(ctx: ToolContext, slug: str, name: str, description: str, location: str = "") -> str:
     body = f"## 情境描写\n\n{description}\n\n## 对话与行动记录\n（游戏开始后由主持人追加）\n"
-    ctx.store.write("scenes", slug, {"名称": name, "性质": "支撑剧情 / 可回收", "地点": location, "在场者": [], "slug": slug}, body)
+    ctx.store.write("scenes", slug, {"name": name, "nature": "支撑剧情 / 可回收", "location": location, "attendees": [], "slug": slug}, body)
     return f"情境 {name}（{slug}）已落盘：data/scenes/{slug}.md"
 
 
@@ -302,7 +302,7 @@ async def create_scene(ctx: ToolContext, slug: str, name: str, description: str,
     },
 )
 async def create_location(ctx: ToolContext, slug: str, name: str, description: str) -> str:
-    ctx.store.write("locations", slug, {"名称": name, "slug": slug}, f"## {name}\n\n{description}\n")
+    ctx.store.write("locations", slug, {"name": name, "slug": slug}, f"## {name}\n\n{description}\n")
     return f"地点 {name}（{slug}）已落盘：data/locations/{slug}.md"
 
 
@@ -340,7 +340,7 @@ async def record_state(
         f"- 弧光：{affected_arcs or '游离事件'}\n- 阶段：{arc_stage or '---'}\n"
         f"- 后续钩子：{hooks or '---'}\n\n## 详细\n\n{detail}\n"
     )
-    ctx.store.write("state-records", name, {"日期": date, "标题": title, "类型": change_type, "slug": name}, body)
+    ctx.store.write("state-records", name, {"date": date, "title": title, "type": change_type, "slug": name}, body)
     return f"状态记录已落盘：data/state-records/{name}.md"
 
 
@@ -438,8 +438,8 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "", search: str 
         matched.sort(key=lambda x: x["_score"], reverse=True)
         lines = [f"{kind} 搜索「{search}」找到 {len(matched)} 条："]
         for d in matched[:10]:
-            name = d["meta"].get("名称") or d["meta"].get("姓名") or d["meta"].get("标题") or d["meta"].get("术语") or d["slug"]
-            extra = d["meta"].get("级别") or d["meta"].get("身份") or d["meta"].get("类别") or d["meta"].get("简要定义") or ""
+            name = d["meta"].get("name") or d["meta"].get("title") or d["meta"].get("term") or d["slug"]
+            extra = d["meta"].get("level") or d["meta"].get("identity") or d["meta"].get("category") or d["meta"].get("brief") or ""
             lines.append(f"- {d['slug']}：{name}" + (f"（{extra}）" if extra else ""))
         if len(matched) > 10:
             lines.append(f"...还有 {len(matched) - 10} 条，请缩小搜索词")
@@ -481,7 +481,7 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
         attendees = ctx.store.chars_in_scene(loc)
         others = [a for a in attendees if a != char_slug]
         return (
-            f"角色 {char_slug} 当前在场景「{meta.get('名称', loc)}」（{loc}）。\n"
+            f"角色 {char_slug} 当前在场景「{meta.get('name', loc)}」（{loc}）。\n"
             f"场景描写：{body[:300]}\n"
             f"同场角色：{('、'.join(others)) if others else '无'}"
         )
@@ -490,7 +490,7 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
             return "错误：who_in 需提供 scene_slug。"
         attendees = ctx.store.chars_in_scene(scene_slug)
         d = ctx.store.read("scenes", scene_slug)
-        name = d[0].get("名称", scene_slug) if d else scene_slug
+        name = d[0].get("name", scene_slug) if d else scene_slug
         if not attendees:
             return f"场景「{name}」（{scene_slug}）当前无角色在场。"
         return f"场景「{name}」（{scene_slug}）在场角色：{'、'.join(attendees)}"
@@ -501,9 +501,9 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
         lines = ["所有角色位置："]
         for c, s in locs.items():
             d = ctx.store.read("characters", c)
-            cname = d[0].get("姓名", c) if d else c
+            cname = d[0].get("name", c) if d else c
             sd = ctx.store.read("scenes", s)
-            sname = sd[0].get("名称", s) if sd else s
+            sname = sd[0].get("name", s) if sd else s
             lines.append(f"- {cname}（{c}）-> {sname}（{s}）")
         return "\n".join(lines)
     return f"错误：未知 query_type '{query_type}'。"
@@ -585,10 +585,10 @@ def _append_attendee(s: store.Store, scene_slug: str, char_slug: str) -> None:
     if d is None:
         return
     meta, body = d
-    attendees = meta.get("在场者", []) or []
+    attendees = meta.get("attendees", []) or []
     if char_slug not in attendees:
         attendees.append(char_slug)
-    meta["在场者"] = attendees
+    meta["attendees"] = attendees
     s.write("scenes", scene_slug, meta, body)
 
 
@@ -597,6 +597,6 @@ def _remove_attendee(s: store.Store, scene_slug: str, char_slug: str) -> None:
     if d is None:
         return
     meta, body = d
-    attendees = [a for a in (meta.get("在场者", []) or []) if a != char_slug]
-    meta["在场者"] = attendees
+    attendees = [a for a in (meta.get("attendees", []) or []) if a != char_slug]
+    meta["attendees"] = attendees
     s.write("scenes", scene_slug, meta, body)

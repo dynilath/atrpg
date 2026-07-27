@@ -1,19 +1,17 @@
 ---
+名称: 港口走私案
 slug: smuggling-ring-arc
-created: 2026-07-24
-name: 港口走私案
-level: 主要
-planner: 备团用户
-source: 预置
-current_stage: 启程
-status: 进行中
-hook: 玩家卷入港口区失踪货物与走私网络的调查，逐步揭开背后更大的势力
-related:
-  地点:
-  - port-district
-  - port-gate
+级别: 主要
+规划者: 备团用户
+来源: 预置
+当前阶段: 启程
+状态: 进行中
+一句话梗概: 玩家卷入港口区失踪货物与走私网络的调查，逐步揭开背后更大的势力
+关联要素:
+  地点: [port-district, port-gate]
   NPC: []
   道具: []
+created: 2026-07-24
 ---
 
 # 港口走私案

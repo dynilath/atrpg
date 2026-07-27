@@ -39,14 +39,14 @@ class Arc:
 
     @classmethod
     def from_meta(cls, slug: str, meta: dict[str, Any]) -> "Arc":
-        # 名称字段兼容：名称/弧光名称
-        title = meta.get("名称") or meta.get("弧光名称") or slug
+        # 名称字段兼容：name/arc_title
+        title = meta.get("name") or meta.get("arc_title") or slug
         return cls(
             slug=slug,
             level=_normalize_level(meta),
-            planner=meta.get("规划者", ""),
-            status=meta.get("状态", "进行中"),
-            current_stage=meta.get("当前阶段", "启程"),
+            planner=meta.get("planner", ""),
+            status=meta.get("status", "进行中"),
+            current_stage=meta.get("current_stage", "启程"),
             title=title,
         )
 
@@ -58,7 +58,7 @@ def _normalize_level(meta: dict[str, Any]) -> str:
     次要局部/次要弧光 等），统一归一到 MAJOR/ONE_SHOT/MINOR。
     无法识别的归为 MINOR（最宽松，不触发主要弧光红线）。
     """
-    raw = str(meta.get("级别") or meta.get("类型") or "").strip()
+    raw = str(meta.get("level") or meta.get("type") or "").strip()
     if "主要" in raw:
         return MAJOR
     if "单局" in raw:
@@ -71,12 +71,12 @@ def _normalize_level(meta: dict[str, Any]) -> str:
 def _check_red_lines(meta: dict[str, Any]) -> str | None:
     """检查新弧光是否触及「高层次」红线（命中即主要，主持人不得规划）。
     返回命中原因或 None。"""
-    scope = (meta.get("影响范围") or "").lower()
+    scope = (meta.get("scope") or "").lower()
     if any(k in scope for k in ("核心npc", "阵营", "势力")):
         return "引入核心 NPC 阵营/势力"
     if any(k in scope for k in ("政权", "灾害", "神祇", "世界状态")):
         return "改变世界基调或状态"
-    span = meta.get("跨度", "")
+    span = meta.get("span", "")
     if "多场" in str(span) or "跨" in str(span):
         return "体量超出单局"
     if _normalize_level(meta) == MAJOR:
@@ -89,7 +89,7 @@ def balance_report(store: "Store") -> dict[str, int]:
     counts = {MAJOR: 0, ONE_SHOT: 0, MINOR: 0}
     for d in store.list_docs("story-arcs"):
         # 状态兼容：进行中/草案/活跃 都算进行中（草案是预置但未启用的）
-        status = str(d["meta"].get("状态", "进行中"))
+        status = str(d["meta"].get("status", "进行中"))
         if "进行" in status or "活跃" in status or "草案" in status:
             lv = _normalize_level(d["meta"])
             counts[lv] = counts.get(lv, 0) + 1
@@ -122,14 +122,14 @@ def plan_arc(
         raise ArcError(f"{level}弧光并行已达上限{LIMITS[level]}，过载，请克制或结束既有弧光")
 
     meta: dict[str, Any] = {
-        "名称": title,
+        "name": title,
         "slug": slug,
-        "级别": level,
-        "规划者": "主持人",
-        "来源": "涌现",
-        "状态": "进行中",
-        "当前阶段": "启程",
-        "平衡检查": {
+        "level": level,
+        "planner": "主持人",
+        "source": "涌现",
+        "status": "进行中",
+        "current_stage": "启程",
+        "balance_check": {
             "与主要冲突": "否",
             "当前并行": counts,
             "过载风险": "否",
@@ -158,7 +158,7 @@ def track_arc(store: "Store", arc_slug: str, state_slug: str, note: str, new_sta
     stamp = datetime.now().strftime("%Y-%m-%d")
     line = f"- {stamp} [{state_slug}] -- {note}"
     if new_stage:
-        meta["当前阶段"] = new_stage
+        meta["current_stage"] = new_stage
 
     # 追加到「状态变化记录」段；若无则新建
     marker = "## 状态变化记录"
@@ -176,5 +176,5 @@ def end_arc(store: "Store", arc_slug: str, reason: str = "") -> None:
     if d is None:
         raise ArcError(f"弧光不存在: {arc_slug}")
     meta, body = d
-    meta["状态"] = "已结束" if "结束" in reason else "搁置"
+    meta["status"] = "已结束" if "结束" in reason else "搁置"
     store.write("story-arcs", arc_slug, meta, body)

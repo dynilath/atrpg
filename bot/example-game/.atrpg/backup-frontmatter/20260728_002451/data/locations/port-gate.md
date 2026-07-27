@@ -1,8 +1,8 @@
 ---
+名称: 港口区大门
 slug: port-gate
-name: 港口区大门
-type: 关卡
-parent: port-district
+类型: 关卡
+所属: port-district
 ---
 
 # 港口区大门

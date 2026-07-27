@@ -46,8 +46,8 @@ export default function PlayerPage({ socket, bindCharacter }: PlayerPageProps) {
         const chars: CharacterOption[] = list.map(
           (c: { slug: string; meta: Record<string, unknown> }) => ({
             slug: c.slug,
-            name: c.meta["name"] || c.meta["姓名"] || c.meta["名称"] || c.slug,
-            identity: c.meta["brief"] || c.meta["身份"] || "",
+            name: c.meta["name"] || c.meta["title"] || c.slug,
+            identity: c.meta["brief"] || c.meta["identity"] || "",
           })
         );
         setCharacters(chars);

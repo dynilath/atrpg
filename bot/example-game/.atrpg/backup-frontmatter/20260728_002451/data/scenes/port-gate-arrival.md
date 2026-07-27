@@ -1,9 +1,9 @@
 ---
+名称: 港口区大门抵达
 slug: port-gate-arrival
-name: 港口区大门抵达
-nature: 主线
-location: port-gate
-attendees: []
+性质: 主线
+地点: port-gate
+在场者: []
 ---
 
 # 港口区大门抵达

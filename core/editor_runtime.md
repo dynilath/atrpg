@@ -25,14 +25,14 @@
 
 | 内容类型 | 模板文件 | 关键字段 |
 |---------|---------|---------|
-| 弧光 | `templates/story-arc.md` | 名称/slug/级别(主要/单局/次要局部)/四阶段设计 |
-| 角色(PC) | `templates/character.md` | 姓名/类型/身份/外貌/性格/背景/能力/剧情连接 |
-| NPC | `templates/npc.md` | 姓名/slug/身份/性质/性格/说话风格/关联弧光/所知信息 |
-| 道具 | `templates/item.md` | 名称/slug/性质/外观/来源/持有者/用途/剧情连接 |
-| 情境 | `templates/scene.md` | 名称/slug/性质/地点/时刻/在场者/情境描写 |
-| 地点 | `templates/location.md` | 名称/slug/类型/规模/外观/下属情境/常驻NPC/势力 |
-| 状态记录 | `templates/state-record.md` | 标题/变化类型/触发者/影响角色/关联弧光/后续钩子 |
-| 设定术语 | `templates/terminology.md` | 术语/别名/类别/简要定义/详细解释/关联术语/来源 |
+| 弧光 | `templates/story-arc.md` | name/level(主要/单局/次要局部)/current_stage/四阶段设计 |
+| 角色(PC) | `templates/character.md` | name/type/identity/人物描写/背景/能力/剧情连接 |
+| NPC | `templates/npc.md` | name/identity/nature/性格/说话风格/关联弧光/所知信息 |
+| 道具 | `templates/item.md` | name/nature/外观/来源/持有者/用途/剧情连接 |
+| 情境 | `templates/scene.md` | name/nature/location/时刻/attendees/情境描写 |
+| 地点 | `templates/location.md` | name/type/规模/外观/下属情境/常驻NPC/势力 |
+| 状态记录 | `templates/state-record.md` | title/type/trigger/影响角色/关联弧光/后续钩子 |
+| 设定术语 | `templates/terminology.md` | term/别名/category/brief/详细解释/关联术语/source |
 
 ## 工作流程
 
@@ -54,15 +54,16 @@
 
 ```
 ---
-名称: <中文名称>
-<其他 YAML 字段，参考对应模板的「关键字段」>
+name: <显示名称>
+<其他 YAML 字段，使用英文字段名，参考模板表>
 ---
 
 <Markdown 正文>
 ```
 
 **不要**包含 `slug` 或 `updated` 字段——这些由系统自动处理。
-`slug` 由系统根据「名称」字段自动生成英文连字符格式。
+`slug` 由系统根据 `name` 字段自动生成英文连字符格式。
+所有 front matter 字段名必须使用英文（如 `name`, `type`, `identity`, `nature`, `level`, `planner`, `current_stage`, `status`, `location`, `attendees` 等），而非中文。
 
 ## 一致性约束
 

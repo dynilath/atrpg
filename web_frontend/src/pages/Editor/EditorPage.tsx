@@ -164,8 +164,8 @@ export default function EditorPage() {
             </div>
           )}
           {resources.map((doc) => {
-            const name = doc.meta?.name || doc.meta?.名称 || doc.meta?.姓名 || doc.meta?.标题 || doc.slug;
-            const desc = doc.meta?.brief || doc.meta?.级别 || doc.meta?.身份 || "";
+            const name = doc.meta?.name || doc.meta?.title || doc.slug;
+            const desc = doc.meta?.brief || doc.meta?.level || doc.meta?.identity || "";
             const isPerson = activeTab === "characters" || activeTab === "npcs";
 
             return (
@@ -235,10 +235,10 @@ export default function EditorPage() {
               {showEdit ? (
                 /* 编辑模式 */
                 <div className="space-y-3 mb-4">
-                  <EditRow label="名称" value={editMeta?.name || editMeta?.名称 || editMeta?.姓名 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, name: v }))} />
-                  <EditRow label="类型" value={editMeta?.type || editMeta?.类型 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, type: v }))} />
-                  <EditRow label="简介" value={editMeta?.brief || editMeta?.身份 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
-                  <EditRow label="性质" value={editMeta?.nature || editMeta?.性质 || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, nature: v }))} />
+                  <EditRow label="名称" value={editMeta?.name || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, name: v }))} />
+                  <EditRow label="类型" value={editMeta?.type || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, type: v }))} />
+                  <EditRow label="简介" value={editMeta?.brief || editMeta?.identity || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
+                  <EditRow label="性质" value={editMeta?.nature || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, nature: v }))} />
                   <div className="flex gap-3">
                     <span className="text-muted-foreground text-sm shrink-0 mt-2">正文：</span>
                     <textarea
@@ -252,10 +252,10 @@ export default function EditorPage() {
                 /* 预览模式 */
                 <>
                   <div className="mb-4 space-y-3">
-                    <MetaRow label="名称" value={selectedMeta.name || selectedMeta.名称 || selectedMeta.姓名 || selectedSlug || ""} />
-                    <MetaRow label="类型" value={selectedMeta.type || selectedMeta.类型 || ""} />
-                    <MetaRow label="简介" value={selectedMeta.brief || selectedMeta.身份 || ""} />
-                    <MetaRow label="性质" value={selectedMeta.nature || selectedMeta.性质 || ""} />
+                    <MetaRow label="名称" value={selectedMeta.name || selectedSlug || ""} />
+                    <MetaRow label="类型" value={selectedMeta.type || ""} />
+                    <MetaRow label="简介" value={selectedMeta.brief || selectedMeta.identity || ""} />
+                    <MetaRow label="性质" value={selectedMeta.nature || ""} />
                   </div>
 
                   {selectedMeta.custom_info && typeof selectedMeta.custom_info === "object" && (

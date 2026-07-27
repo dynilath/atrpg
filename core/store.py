@@ -42,9 +42,69 @@ class StoreError(Exception):
 # YAML 前置 + Markdown 正文 的文档结构
 _DOC_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
+# --- Front Matter 字段名国际化映射 ---
+# 中文 → 英文。_parse_doc 读取时自动翻译，_dump_doc 写入时保持英文。
+# 所有代码和 LLM 提示词统一使用英文字段名。
+_FIELD_MAP: dict[str, str] = {
+    # 通用
+    "名称": "name",
+    "姓名": "name",
+    "标题": "title",
+    "术语": "term",
+    "类型": "type",
+    "性质": "nature",
+    "身份": "identity",
+    "状态": "status",
+    "级别": "level",
+    "类别": "category",
+    "简要定义": "brief",
+    "一句话梗概": "hook",
+    "日期": "date",
+    "来源": "source",
+    "所属": "parent",
+    "基调": "tone",
+    # 弧光专用
+    "规划者": "planner",
+    "当前阶段": "current_stage",
+    "关联要素": "related",
+    "影响范围": "scope",
+    "跨度": "span",
+    "弧光名称": "arc_title",
+    # 情境 / 角色 专用
+    "地点": "location",
+    "在场者": "attendees",
+    "当前场景": "current_scene",
+    # 道具
+    "道具": "items",  # 弧光“关联要素”子键
+}
+
+
+def _translate_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    """将 meta 中的中文键翻译为英文键，实现向后兼容。
+
+    规则：
+    1. 已是英文的键直接保留（不在 _FIELD_MAP 中的键一律视为英文/自定义键）。
+    2. 中文键翻译为英文，但仅当对应英文键尚不存在时才填入。
+    3. 这样「新英文键总是赢」，不会覆盖代码已写入的新值。
+    """
+    translated: dict[str, Any] = {}
+    # 第一遍：保留所有已是英文的键
+    for k, v in meta.items():
+        if k not in _FIELD_MAP:
+            translated[k] = v
+    # 第二遍：翻译中文键，跳过已有英文值的键
+    for k, v in meta.items():
+        en_key = _FIELD_MAP.get(k)
+        if en_key and en_key not in translated:
+            translated[en_key] = v
+    return translated
+
 
 def _parse_doc(text: str) -> tuple[dict[str, Any], str]:
-    """解析 YAML front matter + Markdown body。无 front matter 时返回 ({}, text)。"""
+    """解析 YAML front matter + Markdown body。无 front matter 时返回 ({}, text)。
+
+    自动将中文键翻译为英文键，实现向后兼容。
+    """
     m = _DOC_RE.match(text)
     if not m:
         return {}, text
@@ -52,11 +112,11 @@ def _parse_doc(text: str) -> tuple[dict[str, Any], str]:
         meta = yaml.safe_load(m.group(1)) or {}
     except yaml.YAMLError:
         return {}, text
-    return meta, m.group(2)
+    return _translate_meta(meta), m.group(2)
 
 
 def _dump_doc(meta: dict[str, Any], body: str) -> str:
-    """把 meta + body 序列化为 front matter 文档。"""
+    """把 meta + body 序列化为 front matter 文档。始终输出英文字段名。"""
     front = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip()
     return f"---\n{front}\n---\n\n{body}"
 
@@ -482,11 +542,11 @@ class Store:
 
     # ---------- 位置追踪 ----------
     def chars_in_scene(self, scene_slug: str) -> list[str]:
-        """查某场景有哪些角色（读场景 meta「在场者」字段，反向查询）。"""
+        """查某场景有哪些角色（读场景 meta「attendees」字段，反向查询）。"""
         d = self.read("scenes", scene_slug)
         if d is None:
             return []
-        return d[0].get("在场者", []) or []
+        return d[0].get("attendees", []) or []
 
     def all_char_locations(self, group_id: str) -> dict[str, str]:
         """列出某会话所有角色的当前位置（角色 slug → 场景 slug）。"""

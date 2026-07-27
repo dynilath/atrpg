@@ -42,6 +42,7 @@ def _load_template(kind: str) -> str:
         "items": None,
         "scenes": "scene.md",
         "locations": None,
+        "terminology": "terminology.md",
     }
     tpl = tpl_map.get(kind)
     if not tpl:
@@ -385,6 +386,43 @@ async def create_location(body: dict[str, Any]):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# --- 设定术语 ---
+
+@router.get("/terminology")
+async def list_terminology():
+    """列出所有设定术语。"""
+    try:
+        s = get_store()
+        return JSONResponse(_json_safe(s.list_docs("terminology")))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.post("/terminology")
+async def create_terminology(body: dict[str, Any]):
+    """LLM 辅助新建设定术语。"""
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
+    try:
+        s = get_store()
+        result = await _llm_generate_structured("terminology", prompt, s)
+        if not result:
+            return JSONResponse({"error": "LLM 生成失败"}, status_code=500)
+        meta = result["meta"]
+        meta.setdefault("类别", "其他")
+        p = s.write("terminology", result["slug"], meta, result["body"])
+        logger.info(f"编辑助手创建术语: {result['slug']}")
+        return JSONResponse({
+            "ok": True,
+            "slug": result["slug"],
+            "title": result["title"],
+            "path": str(p),
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ===========================================================================
 # 编辑器 AI 助手聊天（持久化，多轮对话）
 # ===========================================================================
@@ -468,15 +506,15 @@ async def get_editor_chat():
 
 def _build_existing_summary(s) -> str:
     """构建已有内容摘要，供编辑器 AI 参考。"""
-    kinds = ["story-arcs", "characters", "npcs", "items", "scenes", "locations"]
+    kinds = ["story-arcs", "characters", "npcs", "items", "scenes", "locations", "terminology"]
     lines = []
     for kind in kinds:
         docs = s.list_docs(kind)
         if docs:
             lines.append(f"\n### {kind} ({len(docs)} 条)")
             for d in docs[:10]:
-                name = d["meta"].get("名称") or d["meta"].get("姓名") or d["slug"]
-                extra = d["meta"].get("级别") or d["meta"].get("身份") or ""
+                name = d["meta"].get("名称") or d["meta"].get("姓名") or d["meta"].get("术语") or d["slug"]
+                extra = d["meta"].get("级别") or d["meta"].get("身份") or d["meta"].get("类别") or ""
                 lines.append(f"- {d['slug']}: {name}" + (f" ({extra})" if extra else ""))
     return "\n".join(lines) if lines else "暂无已有内容"
 

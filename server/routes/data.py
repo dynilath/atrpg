@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/data", tags=["data"])
 
 DATA_KINDS = (
     "characters", "npcs", "locations", "scenes", "items",
-    "story-arcs", "state-records", "sessions", "players",
+    "story-arcs", "state-records", "terminology", "sessions", "players",
 )
 
 

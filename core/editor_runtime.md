@@ -32,6 +32,7 @@
 | 情境 | `templates/scene.md` | 名称/slug/性质/地点/时刻/在场者/情境描写 |
 | 地点 | `templates/location.md` | 名称/slug/类型/规模/外观/下属情境/常驻NPC/势力 |
 | 状态记录 | `templates/state-record.md` | 标题/变化类型/触发者/影响角色/关联弧光/后续钩子 |
+| 设定术语 | `templates/terminology.md` | 术语/别名/类别/简要定义/详细解释/关联术语/来源 |
 
 ## 工作流程
 

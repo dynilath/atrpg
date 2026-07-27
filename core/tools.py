@@ -388,18 +388,20 @@ async def plan_arc(ctx: ToolContext, slug: str, level: str, title: str, hook: st
 
 @tool(
     "query_memory",
-    "只读检索游戏档案，返回摘要供你引用。可查角色/NPC/地点/场景/道具/弧光/状态记录。"
-    "用于回答「之前发生了什么」「某 NPC 是谁」等回顾类问题，或决策前核实设定。",
+    "只读检索游戏档案，返回摘要供你引用。可查角色/NPC/地点/场景/道具/弧光/状态记录/设定术语。"
+    "用于回答「之前发生了什么」「某 NPC 是谁」等回顾类问题，或决策前核实设定。"
+    "当 kind=\"terminology\" 时，建议提供 search 参数按关键词搜索术语（匹配术语名/别名/正文）。",
     {
         "type": "object",
         "properties": {
-            "kind": {"type": "string", "enum": ["characters", "npcs", "locations", "scenes", "items", "story-arcs", "state-records"], "description": "要检索的档案类别"},
+            "kind": {"type": "string", "enum": ["characters", "npcs", "locations", "scenes", "items", "story-arcs", "state-records", "terminology"], "description": "要检索的档案类别"},
             "slug": {"type": "string", "description": "可选：指定 slug 读取完整内容；留空则列出该类全部摘要"},
+            "search": {"type": "string", "description": "可选：关键词搜索（不区分大小写）。匹配 meta 字段与正文。尤其适合 terminology——用术语名/别名搜索，不用猜 slug"},
         },
         "required": ["kind"],
     },
 )
-async def query_memory(ctx: ToolContext, kind: str, slug: str = "") -> str:
+async def query_memory(ctx: ToolContext, kind: str, slug: str = "", search: str = "") -> str:
     if slug:
         d = ctx.store.read(kind, slug)
         if d is None:
@@ -409,10 +411,44 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "") -> str:
     docs = ctx.store.list_docs(kind)
     if not docs:
         return f"{kind} 下暂无档案。"
+
+    # 关键词搜索
+    if search:
+        matched = []
+        search_lower = search.lower()
+        for d in docs:
+            score = 0
+            # 匹配 meta 字段
+            meta_str = json.dumps(d["meta"], ensure_ascii=False, default=str).lower()
+            score += meta_str.count(search_lower) * 3  # meta 命中权重更高
+            # 匹配 slug
+            if search_lower in d["slug"].lower():
+                score += 5  # slug 精确命中最高权重
+            # 读取 body 匹配
+            try:
+                _, body = ctx.store.read(kind, d["slug"]) or ({}, "")
+                score += body.lower().count(search_lower)
+            except Exception:
+                pass
+            if score > 0:
+                d["_score"] = score
+                matched.append(d)
+        if not matched:
+            return f"{kind} 下未找到匹配「{search}」的条目。"
+        matched.sort(key=lambda x: x["_score"], reverse=True)
+        lines = [f"{kind} 搜索「{search}」找到 {len(matched)} 条："]
+        for d in matched[:10]:
+            name = d["meta"].get("名称") or d["meta"].get("姓名") or d["meta"].get("标题") or d["meta"].get("术语") or d["slug"]
+            extra = d["meta"].get("级别") or d["meta"].get("身份") or d["meta"].get("类别") or d["meta"].get("简要定义") or ""
+            lines.append(f"- {d['slug']}：{name}" + (f"（{extra}）" if extra else ""))
+        if len(matched) > 10:
+            lines.append(f"...还有 {len(matched) - 10} 条，请缩小搜索词")
+        return "\n".join(lines)
+
     lines = [f"{kind} 共 {len(docs)} 条："]
     for d in docs:
-        name = d["meta"].get("名称") or d["meta"].get("姓名") or d["meta"].get("标题") or d["slug"]
-        extra = d["meta"].get("级别") or d["meta"].get("身份") or ""
+        name = d["meta"].get("名称") or d["meta"].get("姓名") or d["meta"].get("标题") or d["meta"].get("术语") or d["slug"]
+        extra = d["meta"].get("级别") or d["meta"].get("身份") or d["meta"].get("类别") or ""
         lines.append(f"- {d['slug']}：{name}" + (f"（{extra}）" if extra else ""))
     return "\n".join(lines)
 
@@ -471,6 +507,46 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
             lines.append(f"- {cname}（{c}）-> {sname}（{s}）")
         return "\n".join(lines)
     return f"错误：未知 query_type '{query_type}'。"
+
+
+# --- 骰子工具 ---------------------------------------------------------------
+
+@tool(
+    "roll_dice",
+    "掷骰子工具。接受 dicelet 骰子表达式（如 2d6+3、4d6k3、d20+5、3#6d6），返回掷骰结果。"
+    "用于 TRPG 中的随机裁决：属性检定、技能判定、战斗伤害、随机事件、运气判定等。"
+    "你应在裁决玩家行动需要随机性时调用此工具，不要自己编造掷骰结果。",
+    {
+        "type": "object",
+        "properties": {
+            "expression": {
+                "type": "string",
+                "description": (
+                    "dicelet 骰子表达式。常用语法："
+                    "d20 — 1个20面骰；"
+                    "2d6+3 — 2个6面骰结果加3；"
+                    "4d6k3 — 4个6面骰取最高的3个（如 D&D 属性生成）；"
+                    "d100 — 1个100面骰（百分骰）；"
+                    "3#d20 — 掷3次d20（多组结果集）；"
+                    "2d20k1 — 优势（取最高）；"
+                    "2d20kl1 — 劣势（取最低）"
+                ),
+            },
+        },
+        "required": ["expression"],
+    },
+)
+async def roll_dice(ctx: ToolContext, expression: str) -> str:
+    try:
+        import dicelet  # type: ignore[import-untyped]
+    except ImportError:
+        return "错误：dicelet 未安装。请运行 pip install dicelet 安装骰子引擎。"
+
+    try:
+        result = dicelet.roll(expression)
+        return result.full
+    except Exception as e:
+        return f"掷骰错误：{e}"
 
 
 # ===========================================================================

@@ -159,8 +159,7 @@ class QQBotManager:
             try:
                 await self._api.send_text(
                     event.chat_scope, group_id,
-                    f"✓ 群绑定成功！当前游戏目录已关联到此群。\n"
-                    f"新令牌: {new_token}",
+                    "✓ 群绑定成功！当前游戏目录已关联到此群。",
                     reply_to=event.message_id,
                 )
             except Exception as e:

@@ -149,6 +149,7 @@ class Store:
         "items",
         "story-arcs",
         "state-records",
+        "terminology",
         "sessions",
         "players",
     )

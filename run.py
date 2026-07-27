@@ -116,42 +116,31 @@ def _setup_logging(level: str) -> None:
         datefmt="%m-%d %H:%M:%S",
     )
 
-    # 控制台
+    # 控制台（stdout → run.ps1 管道自动捕获写入 logs/atrpg.log）
     ch = logging.StreamHandler(sys.stdout)
     ch.setFormatter(fmt)
     root.addHandler(ch)
 
-    # 文件
-    try:
-        fh = logging.FileHandler(str(log_file_path), encoding="utf-8")
-        fh.setFormatter(fmt)
-        root.addHandler(fh)
-    except OSError:
-        pass  # 文件不可写时不影响控制台输出
+    # 文件：仅在直接运行时（非 PowerShell 管道）兜底写入
+    if sys.stdout.isatty():
+        try:
+            log_file_path.parent.mkdir(parents=True, exist_ok=True)
+            fh = logging.FileHandler(str(log_file_path), encoding="utf-8")
+            fh.setFormatter(fmt)
+            root.addHandler(fh)
+        except OSError:
+            pass  # 文件不可写时不影响控制台输出
 
 
 def _uvicorn_log_config() -> dict:
-    """返回 uvicorn 日志配置，使其通过根 logger 输出（走我们自己的 handler）。"""
+    """返回 uvicorn 日志配置，使其通过根 logger 输出（统一走同一个 handler 体系）。"""
     return {
         "version": 1,
         "disable_existing_loggers": False,
-        "formatters": {
-            "default": {
-                "format": "%(asctime)s [%(levelname)-5s] uvicorn | %(message)s",
-                "datefmt": "%m-%d %H:%M:%S",
-            },
-        },
-        "handlers": {
-            "default": {
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-                "formatter": "default",
-            },
-        },
         "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.access": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn": {"handlers": [], "level": "INFO", "propagate": True},
+            "uvicorn.error": {"handlers": [], "level": "INFO", "propagate": True},
+            "uvicorn.access": {"handlers": [], "level": "INFO", "propagate": True},
         },
     }
 

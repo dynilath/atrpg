@@ -28,17 +28,23 @@ $python = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path $python)) {
     Write-Host '[ATRPG] 未找到项目 .venv，自动创建中...' -ForegroundColor Yellow
 
+    # 查找系统 Python：PATH 优先，再扫常见安装位置
     $sysPython = $null
-    $candidates = @(
-        'C:\Users\admin\.workbuddy\binaries\python\versions\3.13.12\python.exe'
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path $c) { $sysPython = $c; break }
-    }
-    if (-not $sysPython) { $sysPython = (Get-Command python3 -ErrorAction SilentlyContinue).Source }
+    $sysPython = (Get-Command python3 -ErrorAction SilentlyContinue).Source
     if (-not $sysPython) { $sysPython = (Get-Command python -ErrorAction SilentlyContinue).Source }
     if (-not $sysPython) {
-        Write-Host '[错误] 找不到系统 Python' -ForegroundColor Red; Read-Host '按回车关闭'; exit 1
+        # PATH 里没有就扫用户级常见安装位置
+        $searchDirs = @(
+            "$env:LOCALAPPDATA\Programs\Python"
+        )
+        $found = Get-ChildItem -Path $searchDirs -Filter 'python.exe' -Recurse -ErrorAction SilentlyContinue `
+            | Sort-Object { [version]($_.Directory.Parent.Name -replace '[^\d.]') } -Descending `
+            | Select-Object -First 1
+        if ($found) { $sysPython = $found.FullName }
+    }
+    if (-not $sysPython) {
+        Write-Host '[错误] 找不到系统 Python （PATH 无 python3/python，且 %LOCALAPPDATA%\Programs\Python 下无安装）' -ForegroundColor Red
+        Read-Host '按回车关闭'; exit 1
     }
 
     Write-Host "  使用: $sysPython"
@@ -95,7 +101,7 @@ if (Test-Path $configToml) {
 $backendHost = '127.0.0.1'
 
 # ---- 后端日志 ----
-$logFile = Join-Path $PSScriptRoot 'backend.log'
+$logFile = Join-Path $PSScriptRoot 'logs\atrpg.log'
 try {
     if (Test-Path $logFile) {
         Add-Content -Path $logFile -Value ("`n" + "=" * 60)
@@ -104,7 +110,7 @@ try {
     }
 } catch {
     $ts = Get-Date -Format 'yyyyMMdd-HHmmss'
-    $logFile = Join-Path $PSScriptRoot "backend-$ts.log"
+    $logFile = Join-Path $PSScriptRoot "logs\atrpg-$ts.log"
     Write-Host "  日志文件被占用，改用: $logFile" -ForegroundColor DarkGray
 }
 

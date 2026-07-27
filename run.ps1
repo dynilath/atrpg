@@ -118,6 +118,7 @@ try {
 $modeLabel = if ($isDist) { '生产模式' } else { '开发模式' }
 Write-Host "[ATRPG] 启动后端 ($modeLabel, ${backendHost}:$backendPort)..." -ForegroundColor Cyan
 $env:PYTHONPATH = $PSScriptRoot
+$env:PYTHONIOENCODING = 'utf-8'
 
 $passArgs = @()
 if ($Setup) { $passArgs += '--setup' }

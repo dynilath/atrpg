@@ -319,11 +319,11 @@ async def create_item(body: dict[str, Any]):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-# --- 场景 ---
+# --- 镜头过场 ---
 
 @router.get("/scenes")
 async def list_scenes():
-    """列出所有场景。"""
+    """列出所有镜头过场。"""
     try:
         s = get_store()
         return JSONResponse(_json_safe(s.list_docs("scenes")))
@@ -333,7 +333,7 @@ async def list_scenes():
 
 @router.post("/scenes")
 async def create_scene(body: dict[str, Any]):
-    """LLM 辅助新建场景。"""
+    """LLM 辅助新建镜头过场。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -346,7 +346,7 @@ async def create_scene(body: dict[str, Any]):
         meta.setdefault("nature", "支撑剧情 / 可回收")
         meta.setdefault("attendees", [])
         p = s.write("scenes", result["slug"], meta, result["body"])
-        logger.info(f"编辑助手创建场景: {result['slug']}")
+        logger.info(f"编辑助手创建镜头过场: {result['slug']}")
         return JSONResponse({
             "ok": True,
             "slug": result["slug"],

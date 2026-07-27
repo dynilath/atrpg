@@ -15,11 +15,11 @@ const allFeatures: Record<Permission, FeatureCard[]> = {
   ],
   "主持人": [
     { key: "play", title: "玩家入口", desc: "加入游戏、查看角色状态、提交行动", path: "/player" },
-    { key: "editor", title: "备团编辑器", desc: "管理弧光、角色、NPC、场景和物品", path: "/editor" },
+    { key: "editor", title: "备团编辑器", desc: "管理弧光、角色、NPC、镜头过场和物品", path: "/editor" },
   ],
   "管理员": [
     { key: "play", title: "玩家入口", desc: "加入游戏、查看角色状态、提交行动", path: "/player" },
-    { key: "editor", title: "备团编辑器", desc: "管理弧光、角色、NPC、场景和物品", path: "/editor" },
+    { key: "editor", title: "备团编辑器", desc: "管理弧光、角色、NPC、镜头过场和物品", path: "/editor" },
     { key: "console", title: "GM 控制台", desc: "查看会话历史、LLM 用量与轮次详情", path: "/console" },
   ],
 };

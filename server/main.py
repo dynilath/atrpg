@@ -147,7 +147,15 @@ def main():
     logging.basicConfig(
         level=getattr(logging, sc.get("log_level", "INFO").upper(), logging.INFO),
         format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
+    # 确保 StreamHandler 使用 UTF-8（Windows 兼容）
+    for h in logging.getLogger().handlers:
+        if isinstance(h, logging.StreamHandler):
+            try:
+                h.stream.reconfigure(encoding="utf-8")
+            except Exception:
+                pass
 
     app = create_app()
     host = sc.get("host", "127.0.0.1")

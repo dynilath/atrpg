@@ -69,7 +69,7 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 
 @tool(
     "reply",
-    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、场景描写）。"
+    "向玩家发送消息（演绎文本、NPC 台词、裁决结果、镜头过场描写）。"
     "这是把内容发到 QQ 群的唯一出口。**所有要给玩家看的文本必须放在 content 参数里**——"
     "不要把演绎文本写在 assistant 消息正文（content 字段）然后调 reply 传空参数，"
     "那会导致内容丢失。一轮只调一次 reply，把全部内容放进去。",
@@ -92,7 +92,7 @@ async def reply(ctx: ToolContext, content: str) -> str:
     return f"已发送（{len(content)}字）"
 
 
-# --- 角色与场景工具 ---------------------------------------------------------
+# --- 角色与镜头过场工具 ---------------------------------------------------------
 
 @tool(
     "draft_character",
@@ -146,12 +146,12 @@ async def draft_character(
 @tool(
     "finalize_character",
     "玩家确认角色卡草案后，把待确认角色转为正式：改状态、绑定 QQ↔角色、"
-    "把角色放入指定场景的在场者并记录场景归属。必须先用 draft_character 生成草案。",
+    "把角色放入指定镜头过场的在场者并记录归属。必须先用 draft_character 生成草案。",
     {
         "type": "object",
         "properties": {
             "char_slug": {"type": "string", "description": "待确认角色的 slug（draft_character 落盘时用的 slug）"},
-            "scene_slug": {"type": "string", "description": "初始场景 slug（由你决定，不由玩家选）"},
+            "scene_slug": {"type": "string", "description": "初始镜头过场 slug（由你决定，不由玩家选）"},
         },
         "required": ["char_slug", "scene_slug"],
     },
@@ -166,7 +166,7 @@ async def finalize_character(ctx: ToolContext, char_slug: str, scene_slug: str) 
 
     scene = ctx.store.read("scenes", scene_slug)
     if scene is None:
-        return f"错误：场景 '{scene_slug}' 不存在。请用 query_memory 查可用场景或 create_scene 新建。"
+        return f"错误：镜头过场 '{scene_slug}' 不存在。请用 query_memory 查可用镜头过场或 create_scene 新建。"
 
     meta["status"] = "正式"
     ctx.store.write("characters", char_slug, meta, body)
@@ -177,9 +177,9 @@ async def finalize_character(ctx: ToolContext, char_slug: str, scene_slug: str) 
     if ctx.send_fn:
         await ctx.send_fn(
             f"✓ 角色已转正式并绑定：data/characters/{char_slug}.md\n"
-            f"✓ 初始场景：{scene_meta.get('name', scene_slug)}"
+            f"✓ 初始镜头过场：{scene_meta.get('name', scene_slug)}"
         )
-    return f"角色 {meta.get('name', char_slug)}（{char_slug}）已正式落盘并绑定，初始场景 {scene_slug}。"
+    return f"角色 {meta.get('name', char_slug)}（{char_slug}）已正式落盘并绑定，初始镜头过场 {scene_slug}。"
 
 
 @tool(
@@ -197,11 +197,11 @@ async def finalize_character(ctx: ToolContext, char_slug: str, scene_slug: str) 
 )
 async def append_scene_dialogue(ctx: ToolContext, scene_slug: str, turn_text: str) -> str:
     if ctx.store.read("scenes", scene_slug) is None:
-        return f"错误：场景 '{scene_slug}' 不存在。"
+        return f"错误：镜头过场 '{scene_slug}' 不存在。"
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     chunk = f"### [{stamp}]\n{turn_text}"
     ctx.store.append_body("scenes", scene_slug, chunk)
-    return f"已追加一轮记录到场景 {scene_slug}。"
+    return f"已追加一轮记录到镜头过场 {scene_slug}。"
 
 
 @tool(
@@ -212,14 +212,14 @@ async def append_scene_dialogue(ctx: ToolContext, scene_slug: str, turn_text: st
         "type": "object",
         "properties": {
             "char_slug": {"type": "string", "description": "角色 slug"},
-            "new_scene_slug": {"type": "string", "description": "目标场景 slug"},
+            "new_scene_slug": {"type": "string", "description": "目标镜头过场 slug"},
         },
         "required": ["char_slug", "new_scene_slug"],
     },
 )
 async def move_character_scene(ctx: ToolContext, char_slug: str, new_scene_slug: str) -> str:
     if ctx.store.read("scenes", new_scene_slug) is None:
-        return f"错误：目标场景 '{new_scene_slug}' 不存在。"
+        return f"错误：目标镜头过场 '{new_scene_slug}' 不存在。"
     old = ctx.store.char_scene(ctx.group_id, char_slug)
     ctx.store.set_char_scene(ctx.group_id, char_slug, new_scene_slug)
     if old:
@@ -389,7 +389,7 @@ async def plan_arc(ctx: ToolContext, slug: str, level: str, title: str, hook: st
 
 @tool(
     "query_memory",
-    "只读检索游戏档案，返回摘要供你引用。可查角色/NPC/地点/场景/道具/弧光/状态记录/设定术语。"
+    "只读检索游戏档案，返回摘要供你引用。可查角色/NPC/地点/镜头过场/道具/弧光/状态记录/设定术语。"
     "用于回答「之前发生了什么」「某 NPC 是谁」等回顾类问题，或决策前核实设定。"
     "当 kind=\"terminology\" 时，建议提供 search 参数按关键词搜索术语（匹配术语名/别名/正文）。",
     {
@@ -456,14 +456,14 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "", search: str 
 
 @tool(
     "query_locations",
-    "追踪角色位置与场景在场者。回答「某角色在哪」「某场景有谁」「所有角色位置」等问题。"
-    "裁决跨场景移动、判断角色能否互动时也应先查询。",
+    "追踪角色位置与镜头过场在场者。回答「某角色在哪」「某镜头过场有谁」「所有角色位置」等问题。"
+    "裁决跨镜头过场移动、判断角色能否互动时也应先查询。",
     {
         "type": "object",
         "properties": {
-            "query_type": {"type": "string", "enum": ["where_is", "who_in", "all"], "description": "where_is=查某角色在哪；who_in=查某场景有哪些角色；all=列出所有角色位置"},
+            "query_type": {"type": "string", "enum": ["where_is", "who_in", "all"], "description": "where_is=查某角色在哪；who_in=查某镜头过场有哪些角色；all=列出所有角色位置"},
             "char_slug": {"type": "string", "description": "where_is 时必填：要查的角色 slug"},
-            "scene_slug": {"type": "string", "description": "who_in 时必填：要查的场景 slug"},
+            "scene_slug": {"type": "string", "description": "who_in 时必填：要查的镜头过场 slug"},
         },
         "required": ["query_type"],
     },
@@ -474,16 +474,16 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
             return "错误：where_is 需提供 char_slug。"
         loc = ctx.store.char_scene(ctx.group_id, char_slug)
         if not loc:
-            return f"角色 {char_slug} 当前无场景归属记录。"
+            return f"角色 {char_slug} 当前无镜头过场归属记录。"
         d = ctx.store.read("scenes", loc)
         if d is None:
-            return f"角色 {char_slug} 在场景 {loc}，但场景档案不存在。"
+            return f"角色 {char_slug} 在镜头过场 {loc}，但镜头过场档案不存在。"
         meta, body = d
         attendees = ctx.store.chars_in_scene(loc)
         others = [a for a in attendees if a != char_slug]
         return (
-            f"角色 {char_slug} 当前在场景「{meta.get('name', loc)}」（{loc}）。\n"
-            f"场景描写：{body[:300]}\n"
+            f"角色 {char_slug} 当前在镜头过场「{meta.get('name', loc)}」（{loc}）。\n"
+            f"镜头过场描写：{body[:300]}\n"
             f"同场角色：{('、'.join(others)) if others else '无'}"
         )
     if query_type == "who_in":
@@ -493,8 +493,8 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
         d = ctx.store.read("scenes", scene_slug)
         name = d[0].get("name", scene_slug) if d else scene_slug
         if not attendees:
-            return f"场景「{name}」（{scene_slug}）当前无角色在场。"
-        return f"场景「{name}」（{scene_slug}）在场角色：{'、'.join(attendees)}"
+            return f"镜头过场「{name}」（{scene_slug}）当前无角色在场。"
+        return f"镜头过场「{name}」（{scene_slug}）在场角色：{'、'.join(attendees)}"
     if query_type == "all":
         locs = ctx.store.all_char_locations(ctx.group_id)
         if not locs:
@@ -510,7 +510,7 @@ async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = ""
     return f"错误：未知 query_type '{query_type}'。"
 
 
-# --- 场景状态查询 -----------------------------------------------------------
+# --- 镜头过场状态查询 -----------------------------------------------------------
 
 @tool(
     "query_scene_state",

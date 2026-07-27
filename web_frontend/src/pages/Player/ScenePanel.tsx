@@ -1,4 +1,4 @@
-/** 场景信息侧边面板。 */
+/** 镜头过场信息侧边面板。 */
 
 import { useGameStore } from "../../store/gameStore";
 import { Card } from "../../components/ui";
@@ -9,7 +9,7 @@ export default function ScenePanel() {
   if (!scene) {
     return (
       <div className="px-4 py-2 text-xs text-muted-foreground">
-        暂无场景信息
+        暂无镜头过场信息
       </div>
     );
   }

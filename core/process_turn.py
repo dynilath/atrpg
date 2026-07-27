@@ -186,7 +186,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
                 "role": "user",
                 "content": turn_user
                 + "\n\n（首次对话。如需了解当前场景/在场者/已有弧光，"
-                "用 query_locations / query_memory 工具查询。处理完毕用 reply 收尾。）",
+                "用 query_locations / query_memory 工具查询。你发送的消息不会被直接处理，**务必**使用 reply 工具发送消息。）",
             },
         ]
 

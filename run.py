@@ -13,11 +13,14 @@ QQ Bot 在 server/qqbot.py 中通过 FastAPI lifespan 按需启动。
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
-# 强制 UTF-8 输出（Windows 默认 GBK 会导致 Unicode 错误）
+# 强制 UTF-8 编码（Windows 默认 cp1252/GBK 会导致日志乱码）
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 # 确保项目根在 sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent

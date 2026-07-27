@@ -7,7 +7,7 @@ import { Sidebar, SbTabs, SbTab, SbList, Button } from "../../components/ui";
 import EditorAIPanel from "./EditorAIPanel";
 import { BookOpen, Palette } from "lucide-react";
 
-type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations";
+type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations" | "terminology";
 
 interface ResourceDoc {
   slug: string;
@@ -21,6 +21,7 @@ const TABS: { key: ResourceKind; label: string }[] = [
   { key: "items", label: "物品" },
   { key: "scenes", label: "镜头过场" },
   { key: "locations", label: "地点" },
+  { key: "terminology", label: "术语" },
 ];
 
 const KIND_LABELS: Record<string, string> = {
@@ -30,6 +31,7 @@ const KIND_LABELS: Record<string, string> = {
   items: "物品",
   scenes: "镜头过场",
   locations: "地点",
+  terminology: "术语",
 };
 
 const EDITOR_API: Record<string, string> = {
@@ -39,6 +41,7 @@ const EDITOR_API: Record<string, string> = {
   items: "items",
   scenes: "scenes",
   locations: "locations",
+  terminology: "terminology",
 };
 
 const DATA_API: Record<string, string> = {
@@ -48,6 +51,7 @@ const DATA_API: Record<string, string> = {
   items: "items",
   scenes: "scenes",
   locations: "locations",
+  terminology: "terminology",
 };
 
 export default function EditorPage() {
@@ -139,7 +143,9 @@ export default function EditorPage() {
     setCoreDocKind(kind);
     setSelectedSlug(null);
     setSelectedMeta(null);
+    setSelectedBody("");
     setShowEdit(false);
+    setError(null);
     try {
       const r = await fetch(`/api/data/${kind}/main`);
       if (!r.ok) throw new Error(await r.text());
@@ -181,7 +187,7 @@ export default function EditorPage() {
             }`}
           >
             <BookOpen size={16} />
-            世界书
+            世界设定
           </button>
           <button
             onClick={() => loadCoreDoc("style-guide")}
@@ -202,7 +208,7 @@ export default function EditorPage() {
               key={t.key}
               label={t.label}
               active={activeTab === t.key}
-              onClick={() => setActiveTab(t.key)}
+              onClick={() => { setActiveTab(t.key); setCoreDocKind(null); }}
             />
           ))}
         </SbTabs>
@@ -222,9 +228,9 @@ export default function EditorPage() {
             </div>
           )}
           {resources.map((doc) => {
-            const name = doc.meta?.name || doc.meta?.title || doc.slug;
-            const desc = doc.meta?.brief || doc.meta?.level || doc.meta?.identity || "";
-            const isPerson = activeTab === "characters" || activeTab === "npcs";
+            const name = doc.meta?.name || doc.meta?.term || doc.meta?.title || doc.slug;
+            const desc = doc.meta?.brief || doc.meta?.category || doc.meta?.level || doc.meta?.identity || "";
+            const isPerson = activeTab === "characters" || activeTab === "npcs" || activeTab === "locations" || activeTab === "terminology";
 
             return (
               <div
@@ -271,7 +277,7 @@ export default function EditorPage() {
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 border-b border-border">
               <span className="text-sm text-muted-foreground font-mono">
-                {coreDocKind === "world-book" ? "世界书 (data/world-book.md)" :
+                {coreDocKind === "world-book" ? "世界设定 (data/world-book.md)" :
                  coreDocKind === "style-guide" ? "文风参考 (data/style-guide.md)" :
                  selectedSlug}
               </span>
@@ -295,10 +301,21 @@ export default function EditorPage() {
               {showEdit ? (
                 /* 编辑模式 */
                 <div className="space-y-3 mb-4">
-                  <EditRow label="名称" value={editMeta?.name || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, name: v }))} />
-                  <EditRow label="类型" value={editMeta?.type || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, type: v }))} />
-                  <EditRow label="简介" value={editMeta?.brief || editMeta?.identity || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
-                  <EditRow label="性质" value={editMeta?.nature || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, nature: v }))} />
+                  {activeTab === "terminology" ? (
+                    <>
+                      <EditRow label="术语" value={editMeta?.term || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, term: v }))} />
+                      <EditRow label="别名" value={editMeta?.aliases || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, aliases: v }))} />
+                      <EditRow label="类别" value={editMeta?.category || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, category: v }))} />
+                      <EditRow label="简要定义" value={editMeta?.brief || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
+                    </>
+                  ) : (
+                    <>
+                      <EditRow label="名称" value={editMeta?.name || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, name: v }))} />
+                      <EditRow label="类型" value={editMeta?.type || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, type: v }))} />
+                      <EditRow label="简介" value={editMeta?.brief || editMeta?.identity || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, brief: v }))} />
+                      <EditRow label="性质" value={editMeta?.nature || ""} onChange={(v) => setEditMeta((m) => ({ ...m!, nature: v }))} />
+                    </>
+                  )}
                   {(activeTab === "characters") && (
                     <EditRow label="颜色(0-360)" value={String(editMeta?.color ?? "")} onChange={(v) => setEditMeta((m) => ({ ...m!, color: v ? Number(v) : undefined as any }))} />
                   )}
@@ -315,10 +332,21 @@ export default function EditorPage() {
                 /* 预览模式 */
                 <>
                   <div className="mb-4 space-y-3">
-                    <MetaRow label="名称" value={selectedMeta.name || selectedSlug || ""} />
-                    <MetaRow label="类型" value={selectedMeta.type || ""} />
-                    <MetaRow label="简介" value={selectedMeta.brief || selectedMeta.identity || ""} />
-                    <MetaRow label="性质" value={selectedMeta.nature || ""} />
+                    {activeTab === "terminology" ? (
+                      <>
+                        <MetaRow label="术语" value={selectedMeta.term || selectedSlug || ""} />
+                        <MetaRow label="别名" value={selectedMeta.aliases || ""} />
+                        <MetaRow label="类别" value={selectedMeta.category || ""} />
+                        <MetaRow label="简要定义" value={selectedMeta.brief || ""} />
+                      </>
+                    ) : (
+                      <>
+                        <MetaRow label="名称" value={selectedMeta.name || selectedSlug || ""} />
+                        <MetaRow label="类型" value={selectedMeta.type || ""} />
+                        <MetaRow label="简介" value={selectedMeta.brief || selectedMeta.identity || ""} />
+                        <MetaRow label="性质" value={selectedMeta.nature || ""} />
+                      </>
+                    )}
                     {activeTab === "characters" && selectedMeta.color != null && (
                       <MetaRow label="颜色" value={
                         <span className="inline-flex items-center gap-1.5">
@@ -361,7 +389,10 @@ export default function EditorPage() {
                     [&_hr]:border-border [&_hr]:my-6
                     [&_a]:text-primary [&_strong]:font-bold [&_em]:italic
                   ">
-                    <Markdown remarkPlugins={[remarkGfm]}>{selectedBody || "（无正文）"}</Markdown>
+                    <Markdown remarkPlugins={[remarkGfm]}>{
+                      selectedBody ? selectedBody :
+                      coreDocKind ? "加载中..." : "（无正文）"
+                    }</Markdown>
                   </div>
                 </>
               )}

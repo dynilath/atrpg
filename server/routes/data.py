@@ -32,6 +32,30 @@ DATA_KINDS = (
 )
 
 
+# --- 世界设定 / 文风（必须在泛化路由之前，否则被 /{kind}/{slug} 拦截）---
+
+@router.get("/world-book/main")
+async def read_world_book():
+    try:
+        s = get_store()
+        body = s.read_world_book()
+        return JSONResponse({"meta": {"name": "世界设定"}, "body": body})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@router.get("/style-guide/main")
+async def read_style_guide():
+    try:
+        s = get_store()
+        body = s.read_style_guide()
+        return JSONResponse({"meta": {"name": "文风参考"}, "body": body})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# --- 泛化 CRUD ---
+
 @router.get("/{kind}")
 async def list_docs(kind: str):
     if kind not in DATA_KINDS:
@@ -77,26 +101,4 @@ async def write_doc(kind: str, slug: str, body: dict[str, Any]):
         return JSONResponse({"ok": True, "path": str(p)})
     except Exception as e:
         logger.exception(f"write {kind}/{slug} 失败")
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-# --- 世界书 / 文风（非 DATA_KINDS，直接读根文件）---
-
-@router.get("/world-book/main")
-async def read_world_book():
-    try:
-        s = get_store()
-        body = s.read_world_book()
-        return JSONResponse({"meta": {"name": "世界书"}, "body": body})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-@router.get("/style-guide/main")
-async def read_style_guide():
-    try:
-        s = get_store()
-        body = s.read_style_guide()
-        return JSONResponse({"meta": {"name": "文风参考"}, "body": body})
-    except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

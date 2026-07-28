@@ -1,7 +1,12 @@
 """store.py --- TRPG 上下文目录加载与持久化。
 
 吃一个符合 agent.md 规划的目录，提供统一的读写接口。
-启动时校验：至少 1 条主要弧光 + 若干场景/地点，否则拒绝开团。
+
+冷启动行为：
+- 空目录/不存在的目录 → 自动创建完整目录骨架 + 占位文件
+  （agent.md / world-book.md / style-guide.md，标注"尚未配置"）
+- 已有文件但缺失关键文件 → 自动补全占位文件
+- 目录结构可疑（有文件但不像游戏目录）→ 警告但不拒绝
 
 线程/进程安全：Store 使用基于文件创建原子性的跨平台文件锁
 （.atrpg/.lock），保护 write/append_body/save_history 等写操作。
@@ -52,6 +57,30 @@ class StoreError(Exception):
 
 # YAML 前置 + Markdown 正文 的文档结构
 _DOC_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
+
+# ---------- 冷启动占位模板加载 ----------
+
+_PLACEHOLDER_DIR = Path(__file__).resolve().parent.parent / "templates"
+
+_PLACEHOLDER_MAP: dict[str, Path] = {
+    "agent": _PLACEHOLDER_DIR / "placeholder-agent.md",
+    "world-book": _PLACEHOLDER_DIR / "placeholder-world-book.md",
+    "style-guide": _PLACEHOLDER_DIR / "placeholder-style-guide.md",
+}
+
+
+def _read_placeholder(kind: str) -> str:
+    """从 templates/ 目录读取占位模板内容。"""
+    path = _PLACEHOLDER_MAP.get(kind)
+    if path and path.exists():
+        return path.read_text(encoding="utf-8")
+    # 回退：模板文件缺失时的硬编码最小占位
+    fallbacks = {
+        "agent": "# ATRPG 游戏目录\n\n> ⚠️ 尚未配置。\n",
+        "world-book": "---\nname: 世界书\ntype: 世界书\n---\n\n# 世界书\n\n> ⚠️ 尚未配置。\n",
+        "style-guide": "---\nname: 文风参考\ntype: 文风参考\n---\n\n# 文风参考\n\n> ⚠️ 尚未配置。\n",
+    }
+    return fallbacks.get(kind, "")
 
 # --- Front Matter 字段名国际化映射 ---
 # 中文 → 英文。_parse_doc 读取时自动翻译，_dump_doc 写入时保持英文。
@@ -226,8 +255,11 @@ class Store:
 
     def __init__(self, game_dir: str | Path):
         self.root = Path(game_dir).resolve()
-        if not self.root.is_dir():
-            raise StoreError(f"游戏目录不存在: {self.root}")
+        if not self.root.exists():
+            self.root.mkdir(parents=True)
+            logger.info(f"创建游戏目录: {self.root}")
+        elif not self.root.is_dir():
+            raise StoreError(f"路径存在但不是目录: {self.root}")
         self._ensure_subdirs()
         self._init_databases()
         self._validate()
@@ -252,21 +284,95 @@ class Store:
             logger.warning("数据库初始化失败（可能已存在）", exc_info=True)
 
     def _validate(self) -> None:
-        """启动校验：必须有「世界基础材料」。
+        """启动校验 + 冷启动自动初始化。
 
-        接受两种形式之一：
-        - data/world-book.md（经 build_world_book.py 总结的常驻世界书，推荐）
-        - 根目录下的 .txt/.md 原始材料（pdf_extract 等，未预处理时回退）
+        三级策略：
+        1. 空目录（无 agent.md + 无任何世界材料）→ 创建全部占位文件
+        2. 已有部分文件 → 检查完整性，自动补全缺失的占位文件
+        3. 目录结构可疑 → 警告（但不拒绝，允许用户自行修复）
 
-        弧光/场景/地点都不强制——没有预置主要弧光也能开团，主持人可现场即兴规划
-        单局/局部弧光；场景/地点按需由 LLM 生成。但世界基础材料是 LLM 主持人的
-        世界知识来源，缺了它无法基于规则书带团。
+        弧光/场景/地点都不强制——没有预置主要弧光也能开团。
         """
-        if not (self.root / "data" / "world-book.md").exists() and not self.list_world_material():
-            raise StoreError(
-                "目录缺少「世界基础材料」：需 data/world-book.md（推荐，用 build_world_book.py 生成）"
-                "或根目录下至少 1 个 .txt/.md 原始材料文件。"
-            )
+        has_agent = (self.root / "agent.md").exists()
+        has_wb = (self.root / "data" / "world-book.md").exists()
+        has_raw = bool(self.list_world_material())
+        has_style = (self.root / "data" / "style-guide.md").exists()
+
+        # --- 场景 1：空目录（无 agent 且无任何材料）---
+        is_empty = not has_agent and not has_wb and not has_raw
+        if is_empty:
+            self._create_placeholders(all=True)
+            logger.info("空目录：已创建占位文件（agent.md / world-book.md / style-guide.md）")
+            return
+
+        # --- 场景 2：已有部分文件，检查完整性并自动补全 ---
+        if not has_wb and not has_raw:
+            self._create_placeholder("world-book")
+            logger.info("缺少世界材料，已创建占位 world-book.md")
+        if not has_style:
+            self._create_placeholder("style-guide")
+            logger.info("缺少文风参考，已创建占位 style-guide.md")
+        if not has_agent:
+            self._create_placeholder("agent")
+            logger.info("缺少 agent.md，已创建占位")
+
+        # --- 场景 3：可疑目录检测（有文件但完全不符合预期结构）---
+        self._check_suspicious(has_agent, has_wb, has_raw)
+
+    def _check_suspicious(
+        self, has_agent: bool, has_wb: bool, has_raw: bool
+    ) -> None:
+        """检测目录是否可能是一个非 ATRPG 游戏目录。
+
+        触发条件：有任意文件/子目录，但不含 agent.md、world-book.md、
+        原始材料，且 data/ 下没有任何预期的子目录。
+        """
+        data_dir = self.root / "data"
+        has_expected_subdirs = data_dir.is_dir() and any(
+            (data_dir / sub).is_dir() for sub in self.SUBDIRS
+        )
+        # 根目录是否有其他文件（排除 agent.md 和占位文件）
+        root_files = [
+            p for p in self.root.iterdir()
+            if p.name not in ("agent.md", "data", ".atrpg", ".git")
+        ]
+        has_other_files = bool(root_files)
+
+        if not has_agent and not has_wb and not has_raw and not has_expected_subdirs:
+            if has_other_files:
+                logger.warning(
+                    "⚠️ 目录结构不符合预期：根目录有文件但缺少 agent.md、data/ 子目录和世界材料。"
+                    "如果这不是一个 ATRPG 游戏目录，请检查 --game-dir 配置是否正确。"
+                    "根目录现有文件: %s",
+                    [p.name for p in root_files],
+                )
+
+    def _create_placeholders(self, *, all: bool = False) -> None:
+        """批量创建占位文件。"""
+        if all:
+            self._create_placeholder("agent")
+            self._create_placeholder("world-book")
+            self._create_placeholder("style-guide")
+        else:
+            # 仅创建缺失的
+            if not (self.root / "agent.md").exists():
+                self._create_placeholder("agent")
+            if not (self.root / "data" / "world-book.md").exists():
+                self._create_placeholder("world-book")
+            if not (self.root / "data" / "style-guide.md").exists():
+                self._create_placeholder("style-guide")
+
+    def _create_placeholder(self, kind: str) -> None:
+        """创建单个占位文件（内容从 templates/ 目录读取）。"""
+        targets = {
+            "agent": self.root / "agent.md",
+            "world-book": self.root / "data" / "world-book.md",
+            "style-guide": self.root / "data" / "style-guide.md",
+        }
+        path = targets[kind]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_read_placeholder(kind), encoding="utf-8")
+        logger.debug(f"创建占位文件: {path.relative_to(self.root)}")
 
     # ---------- 通用读写 ----------
     def _path(self, kind: str, slug: str) -> Path:

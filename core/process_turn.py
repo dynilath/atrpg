@@ -102,7 +102,7 @@ def _load_system_prefix(s: store.Store, mode: str = "game") -> str:
             parts.append(f"---\n\n# 世界书（常驻世界观知识，你的设定依据）\n\n{world}")
         style = s.read_style_guide()
         if style:
-            parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与场景描写时模仿此风格）\n\n{style}")
+            parts.append(f"---\n\n# 文风参考（叙事调性，演绎 NPC 台词与情景描写时模仿此风格）\n\n{style}")
     result = "\n\n".join(parts)
     _system_prefix_cache[cache_key] = (mtime_key, result)
     return result
@@ -163,7 +163,7 @@ def _build_sender_frame(s: store.Store, group_id: str, member_openid: str, char_
         loc = f" | 情景: {scene_name}" if scene_name else ""
         present = ("\n" + " | ".join(present_parts)) if present_parts else ""
         ident = f"（{char_identity}）" if char_identity else ""
-        return f'<turn sender="{char_name}" char="{effective_slug}"{loc}{location_str}>{present}\n状态: 已绑定角色{ident}'
+        return f'<turn sender="{char_name}" char="{effective_slug}"{loc}{location_str}>{present}\n状态: 已绑定角色{ident}\n（需要情景详情时调用 query_character_scene 工具）'
     else:
         pending = _find_pending_char(s, member_openid)
         if pending:
@@ -252,7 +252,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
     else:
         reply_hint = (
             "\n\n（首次对话。如需了解当前情景/在场者/已有弧光，"
-            "用 query_locations / query_memory 工具查询。处理完后**必须调用 reply 工具发送回复**。）"
+            "用 query_character_scene / query_memory 工具查询。处理完后**必须调用 reply 工具发送回复**。）"
         )
         messages = [
             {"role": "system", "content": system_prefix},

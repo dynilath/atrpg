@@ -1,4 +1,10 @@
-"""为所有镜头过场文件添加角色状态段。"""
+"""【已废弃】为所有镜头过场文件添加角色状态段。
+
+⚠️ 此脚本用于向 scene 文件批量添加"## 在场角色状态"表格（旧格式）。
+该格式已于 2026-07-28 废弃：角色当前状态改为维护在角色数据文件的 frontmatter 字段中
+（current_location / current_status / equipment），不再在 scene 中表格化维护。
+保留此脚本仅作历史参考，不应再次运行。
+"""
 import sys
 from pathlib import Path
 

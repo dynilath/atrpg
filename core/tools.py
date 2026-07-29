@@ -70,7 +70,7 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 @tool(
     "reply",
     "【必须调用】向玩家发送消息，是唯一出口——不调 reply 玩家什么也看不到。"
-    "内容可包含演绎文本、NPC 台词、裁决结果、场景描写。"
+    "内容可包含演绎文本、NPC 台词、裁决结果、情景描写。"
     "所有要给玩家看的文本必须放在 content 参数里，不要写在 assistant 消息正文然后传空参数。"
     "长篇幅叙事可分多次 reply；每次应自成一体。",
     {
@@ -405,6 +405,13 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "", search: str 
         if d is None:
             return f"未找到 {kind}/{slug}。"
         meta, body = d
+        # 情景与弧光：只返回最新 3 条事件，避免正文过长
+        if kind in ("scenes", "story-arcs"):
+            events = _extract_recent_events(body)
+            if events:
+                body = "…\n\n📜 最新事件（3 条）：\n" + "\n".join(events)
+            else:
+                body = body[:500] + ("…" if len(body) > 500 else "")
         return f"## {kind}/{slug}\n\n元信息：{json.dumps(meta, ensure_ascii=False, default=str)}\n\n{body}"
     docs = ctx.store.list_docs(kind)
     if not docs:
@@ -451,170 +458,196 @@ async def query_memory(ctx: ToolContext, kind: str, slug: str = "", search: str 
     return "\n".join(lines)
 
 
+# --- 角色情景查询 -----------------------------------------------------------
+
 @tool(
-    "query_locations",
-    "查询角色/NPC所在的地点与情景。每个情景属于一个地点（如「简报室」情景属于「三角机构分部」地点）。"
-    "where_is 返回：地点 → 情景 → 同场者。who_in 返回：地点 → 情景 → 在场者。all 列出全部。"
-    "裁决跨情景移动、判断角色能否互动前先查询。",
+    "query_character_scene",
+    "查询角色当前所在的地点与情景详情。返回：地点名称、情景名称与时间、"
+    "同场角色与 NPC、角色自身当前状态、最新 3 条事件推进。"
+    "当玩家说「我在哪」「现在什么情况」时调用。裁决角色行动前也应先调用此工具。"
+    "（查角色自身信息用 query_memory(kind=\"characters\")）",
     {
         "type": "object",
         "properties": {
-            "query_type": {"type": "string", "enum": ["where_is", "who_in", "all"], "description": "where_is=查某角色在哪（返回地点+情景）；who_in=查某情景有谁（返回地点+情景）；all=列出所有角色位置"},
-            "char_slug": {"type": "string", "description": "where_is 时必填：要查的角色或 NPC slug"},
-            "scene_slug": {"type": "string", "description": "who_in 时必填：要查的情景 slug"},
+            "char_slug": {
+                "type": "string",
+                "description": "角色或 NPC slug（必填）",
+            },
         },
-        "required": ["query_type"],
+        "required": ["char_slug"],
     },
 )
-async def query_locations(ctx: ToolContext, query_type: str, char_slug: str = "", scene_slug: str = "") -> str:
-    if query_type == "where_is":
-        if not char_slug:
-            return "错误：where_is 需提供 char_slug。"
-        # 先试角色，再试 NPC
-        loc = ctx.store.char_current_scene(char_slug) or ctx.store.npc_current_scene(char_slug)
-        if not loc:
-            loc = ctx.store.char_scene(ctx.group_id, char_slug)  # 回退 session map
-        if not loc:
-            return f"{char_slug} 当前无情景归属记录。"
-        d = ctx.store.read("scenes", loc)
-        if d is None:
-            return f"{char_slug} 在情景 {loc}，但情景档案不存在。"
-        meta, body = d
-        chars, npcs = ctx.store.who_in_scene(loc)
-        others = [a for a in chars if a != char_slug] + npcs
-        other_names = []
+async def query_character_scene(ctx: ToolContext, char_slug: str) -> str:
+    d = ctx.store.read("characters", char_slug) or ctx.store.read("npcs", char_slug)
+    if d is None:
+        return f"错误：角色 '{char_slug}' 不存在。"
+
+    meta, _ = d
+    char_name = meta.get("name", char_slug)
+
+    scene_slug = (
+        ctx.store.char_current_scene(char_slug)
+        or ctx.store.npc_current_scene(char_slug)
+    )
+    if not scene_slug:
+        scene_slug = ctx.store.char_scene(ctx.group_id, char_slug)
+    if not scene_slug:
+        return f"{char_name}（{char_slug}）当前无情景归属。"
+
+    sd = ctx.store.read("scenes", scene_slug)
+    if sd is None:
+        return f"{char_name} 归属于情景 {scene_slug}，但情景档案不存在。"
+
+    scene_meta, scene_body = sd
+    scene_name = scene_meta.get("name", scene_slug)
+    scene_time = scene_meta.get("time", "未知时间")
+
+    lines: list[str] = []
+    # 地点
+    loc_slug = scene_meta.get("location")
+    if loc_slug:
+        loc_name = ctx.store.location_name(loc_slug)
+        if loc_name:
+            lines.append(f"📍 地点：{loc_name}（{loc_slug}）")
+        else:
+            lines.append(f"📍 地点：{loc_slug}（档案缺失）")
+    else:
+        lines.append("📍 地点：未设定")
+
+    lines.append(f"🎬 当前情景：{scene_name}（{scene_slug}）| 时间：{scene_time}")
+
+    # 同场
+    chars, npcs = ctx.store.who_in_scene(scene_slug)
+    others = [c for c in chars if c != char_slug] + npcs
+    if others:
+        other_names: list[str] = []
         for a in others:
             ad = ctx.store.read("characters", a) or ctx.store.read("npcs", a)
             other_names.append(ad[0].get("name", a) if ad else a)
-        lines = []
-        # 地点信息优先
-        location_slug = meta.get("location")
-        if location_slug:
-            loc_name = ctx.store.location_name(location_slug)
-            if loc_name:
-                lines.append(f"地点：{loc_name}（{location_slug}）")
-            else:
-                lines.append(f"地点：{location_slug}（档案缺失）")
-        else:
-            lines.append(f"地点：未设定")
-        # 情景信息
-        lines.append(f"情景：{meta.get('name', loc)}（{loc}）")
-        lines.append(f"情景描写：{body[:300]}")
-        lines.append(f"同场：{'、'.join(other_names) if other_names else '无'}")
-        return "\n".join(lines)
-    if query_type == "who_in":
-        if not scene_slug:
-            return "错误：who_in 需提供 scene_slug。"
-        chars, npcs = ctx.store.who_in_scene(scene_slug)
-        d = ctx.store.read("scenes", scene_slug)
-        name = d[0].get("name", scene_slug) if d else scene_slug
-        lines = []
-        location_slug = d[0].get("location") if d else None
-        if location_slug:
-            loc_name = ctx.store.location_name(location_slug) or location_slug
-            lines.append(f"地点：{loc_name}（{location_slug}）")
-        lines.append(f"情景：{name}（{scene_slug}）")
-        all_attendees = chars + npcs
-        if not all_attendees:
-            lines.append("当前无角色或 NPC 在场。")
-        else:
-            lines.append(f"在场：{'、'.join(all_attendees)}")
-        return "\n".join(lines)
-    if query_type == "all":
-        locs = ctx.store.all_char_locations(ctx.group_id)
-        if not locs:
-            return "当前无角色位置记录。"
-        lines = ["所有角色/NPC位置："]
-        for c, s in locs.items():
-            d = ctx.store.read("characters", c) or ctx.store.read("npcs", c)
-            cname = d[0].get("name", c) if d else c
-            sd = ctx.store.read("scenes", s)
-            sname = sd[0].get("name", s) if sd else s
-            lines.append(f"- {cname}（{c}）-> {sname}（{s}）")
-        return "\n".join(lines)
-    return f"错误：未知 query_type '{query_type}'。"
+        lines.append(f"👥 同场：{'、'.join(other_names)}")
+    else:
+        lines.append("👥 同场：无其他角色")
+
+    # 角色自身当前状态
+    char_status = meta.get("current_status", "")
+    char_equip = meta.get("equipment", [])
+    if char_status or char_equip:
+        status_line = f"🎭 自身：{char_status}" if char_status else ""
+        if char_equip:
+            equip_str = "、".join(char_equip) if isinstance(char_equip, list) else str(char_equip)
+            status_line += f"；持有：{equip_str}"
+        lines.append(status_line)
+
+    # 最新 3 条事件
+    events = _extract_recent_events(scene_body)
+    if events:
+        lines.append("📜 最近事件（最新 3 条）：")
+        for ev in events:
+            lines.append(f"  {ev}")
+    else:
+        lines.append("📜 最近事件：（暂无记录）")
+
+    return "\n".join(lines)
 
 
-# --- 情景状态查询 -----------------------------------------------------------
+# --- 情景查询 ---------------------------------------------------------------
 
 @tool(
-    "query_scene_state",
-    "查询某个地点的最新情景状态。当玩家返回之前离开的地点、切换到焦点外的情景、"
-    "或需要知道某个地点'上次发生了什么'时调用。"
-    "按文件名日期时间排序，自动取最新情景。"
-    "返回：情景名称、游戏内时间、在场角色及其状态、最近事件摘要。",
+    "query_scene",
+    "查询某个情景的完整状态。返回：地点、情景名称与时间、"
+    "在场角色（含各自当前状态与装备）与 NPC 列表、最新 3 条事件推进。"
+    "用于了解非当前角色所在情景的状况，或 GM 需要查看某情景详情时。",
     {
         "type": "object",
         "properties": {
-            "location_slug": {
+            "scene_slug": {
                 "type": "string",
-                "description": "地点 slug，如 triad-branch-office",
+                "description": "情景 slug（必填）",
             },
         },
-        "required": ["location_slug"],
+        "required": ["scene_slug"],
     },
 )
-async def query_scene_state(ctx: ToolContext, location_slug: str) -> str:
-    docs = ctx.store.list_docs("scenes")
-    # 按文件名筛选属于该地点的镜头（文件名含 location_slug）
-    candidates = []
-    for d in docs:
-        if location_slug in d["slug"]:
-            candidates.append(d)
-    if not candidates:
-        # 也搜一下 location front matter
-        for d in docs:
-            meta = ctx.store.read("scenes", d["slug"])
-            if meta and meta[0].get("location") == location_slug:
-                candidates.append(d)
+async def query_scene(ctx: ToolContext, scene_slug: str) -> str:
+    d = ctx.store.read("scenes", scene_slug)
+    if d is None:
+        return f"错误：情景 '{scene_slug}' 不存在。"
 
-    if not candidates:
-        return f"地点 {location_slug} 尚未有任何情景记录。"
+    scene_meta, scene_body = d
+    scene_name = scene_meta.get("name", scene_slug)
+    scene_time = scene_meta.get("time", "未知时间")
 
-    # 文件名格式 {YYYY-MM-DD}_{HHMM}-... — 字符序即为时间序
-    candidates.sort(key=lambda d: d["slug"], reverse=True)
-    latest = candidates[0]
-    meta, body = ctx.store.read("scenes", latest["slug"])
+    lines = [f"🎬 {scene_name}（{scene_slug}）| 时间：{scene_time}"]
 
-    scene_time = meta.get("time", "未知时间")
-    scene_name = meta.get("name", latest["slug"])
-    chars, npcs = ctx.store.who_in_scene(latest["slug"])
-    attendees = chars + npcs
+    # 地点
+    loc_slug = scene_meta.get("location")
+    if loc_slug:
+        loc_name = ctx.store.location_name(loc_slug)
+        if loc_name:
+            lines.append(f"📍 地点：{loc_name}（{loc_slug}）")
+        else:
+            lines.append(f"📍 地点：{loc_slug}（档案缺失）")
+    else:
+        lines.append("📍 地点：未设定")
 
-    # 提取在场角色状态段（如果存在）
-    char_state = ""
-    if "## 在场角色状态" in body:
-        cs_start = body.index("## 在场角色状态")
-        cs_end = body.find("\n## ", cs_start + 1)
-        if cs_end == -1:
-            cs_end = len(body)
-        char_state = body[cs_start:cs_end].strip()
+    # 在场者
+    chars, npcs = ctx.store.who_in_scene(scene_slug)
+    if not chars and not npcs:
+        lines.append("👥 在场：无角色或 NPC")
+    else:
+        present: list[str] = []
+        for a in chars:
+            ad = ctx.store.read("characters", a) or ctx.store.read("npcs", a)
+            if ad:
+                ameta = ad[0]
+                a_name = ameta.get("name", a)
+                a_status = ameta.get("current_status", "")
+                a_equip = ameta.get("equipment", [])
+                entry = a_name
+                if a_status:
+                    entry += f"（{a_status}）"
+                if a_equip:
+                    equip_str = "、".join(a_equip) if isinstance(a_equip, list) else str(a_equip)
+                    entry += f" [持有：{equip_str}]"
+                present.append(entry)
+            else:
+                present.append(a)
+        for a in npcs:
+            ad = ctx.store.read("npcs", a)
+            if ad:
+                present.append(ad[0].get("name", a))
+            else:
+                present.append(a)
+        lines.append(f"👥 在场（{len(present)} 人）：{'、'.join(present)}")
 
-    # 提取最后几行事件推进
-    event_summary = ""
-    if "## 事件推进" in body:
-        ev_start = body.rindex("## 事件推进")
-        tail = body[ev_start:]
-        lines = [l for l in tail.split("\n") if l.strip() and not l.strip().startswith("#") and not l.strip().startswith(">")]
-        # 取最近 5 条非标题行
-        recent = lines[-5:] if len(lines) > 5 else lines
-        event_summary = "\n".join(recent)
+    # 最新 3 条事件
+    events = _extract_recent_events(scene_body)
+    if events:
+        lines.append("📜 最近事件（最新 3 条）：")
+        for ev in events:
+            lines.append(f"  {ev}")
+    else:
+        lines.append("📜 最近事件：（暂无记录）")
 
-    parts = [
-        f"📍 {scene_name}（{scene_time}）",
-        f"在场角色: {', '.join(attendees) if attendees else '无'}",
-    ]
-    if char_state:
-        parts.append(f"\n{char_state}")
-    if event_summary:
-        parts.append(f"\n最近事件:\n{event_summary}")
+    return "\n".join(lines)
 
-    # 如果有更早的镜头，提示
-    if len(candidates) > 1:
-        prev = candidates[1]
-        parts.append(f"\n（更早的镜头: {prev['slug']}，共 {len(candidates)} 个镜头）")
 
-    return "\n".join(parts)
+def _extract_recent_events(body: str, max_events: int = 3) -> list[str]:
+    """从情景正文提取最近 N 条事件推进条目。"""
+    for marker in ("## 事件推进", "## 对话与行动记录"):
+        if marker in body:
+            idx = body.rindex(marker)
+            tail = body[idx + len(marker):]
+            items: list[str] = []
+            for line in tail.split("\n"):
+                stripped = line.strip()
+                if not stripped or stripped.startswith(">"):
+                    continue
+                if stripped.startswith("#"):
+                    continue
+                items.append(stripped)
+            return items[-max_events:] if len(items) > max_events else items
+    return []
 
 
 # --- 骰子工具 ---------------------------------------------------------------

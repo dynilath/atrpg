@@ -18,7 +18,7 @@ __all__ = ["ArcError", "MAJOR", "ONE_SHOT", "MINOR", "Arc", "plan_arc", "track_a
 
 MAJOR = "主要"          # 备团用户预置，主持人不可规划
 ONE_SHOT = "单局"        # 主持人可规划（任务/冒险，1~3 次聚会）
-MINOR = "次要局部"       # 主持人可规划（单场景局部互动，可不收尾）
+MINOR = "次要局部"       # 主持人可规划（单情景局部互动，可不收尾）
 
 # 并行阈值
 LIMITS = {MAJOR: 2, ONE_SHOT: 3, MINOR: 3}

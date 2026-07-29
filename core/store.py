@@ -114,6 +114,7 @@ _FIELD_MAP: dict[str, str] = {
     "地点": "location",
     "在场者": "attendees",
     "当前场景": "current_scene",
+    "当前情景": "current_scene",
     # 道具
     "道具": "items",  # 弧光“关联要素”子键
 }
@@ -163,12 +164,12 @@ def _dump_doc(meta: dict[str, Any], body: str) -> str:
 
 @dataclass
 class Session:
-    """团会话状态：群号 ↔ 团、角色→场景映射、进行中弧光。"""
+    """团会话状态：群号 ↔ 团、角色→情景映射、进行中弧光。"""
 
     group_id: str
     game_name: str = ""
     status: str = "进行中"  # 进行中 / 暂停 / 已归档
-    char_scene_map: dict[str, str] = field(default_factory=dict)  # 角色 slug → 场景 slug
+    char_scene_map: dict[str, str] = field(default_factory=dict)  # 角色 slug → 情景 slug
     active_arcs: list[dict[str, str]] = field(default_factory=list)
     pending_director: bool = False
     last_active: str = ""
@@ -291,7 +292,7 @@ class Store:
         2. 已有部分文件 → 检查完整性，自动补全缺失的占位文件
         3. 目录结构可疑 → 警告（但不拒绝，允许用户自行修复）
 
-        弧光/场景/地点都不强制——没有预置主要弧光也能开团。
+        弧光/情景/地点都不强制——没有预置主要弧光也能开团。
         """
         has_agent = (self.root / "agent.md").exists()
         has_wb = (self.root / "data" / "world-book.md").exists()
@@ -705,7 +706,7 @@ class Store:
         return chars, npcs
 
     def scene_location(self, scene_slug: str) -> str | None:
-        """读场景文件的 location 字段。"""
+        """读情景文件的 location 字段。"""
         d = self.read("scenes", scene_slug)
         if d is None:
             return None
@@ -719,7 +720,7 @@ class Store:
         return d[0].get("name")
 
     def all_char_locations(self, group_id: str) -> dict[str, str]:
-        """扫描所有角色和 NPC 文件，返回 slug → 场景 slug。"""
+        """扫描所有角色和 NPC 文件，返回 slug → 情景 slug。"""
         result: dict[str, str] = {}
         for d in self.list_docs("characters"):
             cs = d["meta"].get("current_scene")

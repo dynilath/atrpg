@@ -132,7 +132,7 @@ llm_utility_model = "deepseek-v4-flash"
 玩家说的内容
 </turn>
 ```
-场景描写/在场者/弧光详情**不自动喂**——LLM 用 `query_locations`/`query_memory` 按需查。
+情景描写/在场者/弧光详情**不自动喂**——LLM 用 `query_character_scene`/`query_memory` 按需查。
 
 ### 4.3 流式回复
 - `reply` 工具被调用时**立即发群**（通过 `send_fn` 包装 `matcher.send`）。
@@ -161,7 +161,8 @@ llm_utility_model = "deepseek-v4-flash"
 字段兼容：`级别`/`类型`，`主要`/`主要弧光` 等多种写法归一化。
 
 ### 4.7 位置追踪
-- `query_locations` 工具：`where_is`（角色在哪）/ `who_in`（场景有谁）/ `all`（所有角色位置）。
+- `query_character_scene` 工具：查询角色当前所在情景详情（地点/同场/最新 3 条事件）。
+- `query_scene` 工具：查询某情景完整状态（地点/在场者/最新 3 条事件）。
 - store 层：`char_scene`（正向）+ `chars_in_scene`（反向，读场景在场者）+ `all_char_locations`。
 
 ---
@@ -180,7 +181,8 @@ llm_utility_model = "deepseek-v4-flash"
 | `track_arc` | 弧光阶段追踪 |
 | `plan_arc` | 规划次要局部/单局弧光 |
 | `query_memory` | 检索 data/ 档案 |
-| `query_locations` | 角色位置/场景在场者查询 |
+| `query_character_scene` | 角色情景查询 |
+| `query_scene` | 情景完整状态查询 |
 
 ---
 

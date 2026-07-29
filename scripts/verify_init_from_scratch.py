@@ -256,7 +256,7 @@ def main() -> int:
 
     store_rw.set_char_current_scene(char_slug, scene_slug)
     assert store_rw.char_current_scene(char_slug) == scene_slug
-    ok(f"  char_current_scene: {char_slug} → {scene_slug}")
+    ok(f"  char_current_scene（读 current_location）：{char_slug} → {scene_slug}")
 
     chars_in, npcs_in = store_rw.who_in_scene(scene_slug)
     assert char_slug in chars_in

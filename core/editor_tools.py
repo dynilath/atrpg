@@ -149,7 +149,7 @@ async def read_doc(store: store_mod.Store, kind: str, slug: str, include_related
         related_parts = []
         # 角色 → 所在情景
         if kind == "characters":
-            cs = meta.get("current_scene")
+            cs = meta.get("current_location")
             if cs:
                 sd = store.read("scenes", cs)
                 related_parts.append(f"当前情景: {cs}" + (f" ({sd[0].get('name', cs)})" if sd else ""))

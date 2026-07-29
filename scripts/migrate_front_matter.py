@@ -96,7 +96,8 @@ _FIELD_MAP_pat = {
     "日期": "date", "来源": "source", "所属": "parent", "基调": "tone",
     "规划者": "planner", "当前阶段": "current_stage", "关联要素": "related",
     "影响范围": "scope", "跨度": "span", "弧光名称": "arc_title",
-    "地点": "location", "在场者": "attendees", "当前场景": "current_scene",
+    "地点": "location", "在场者": "attendees", "当前场景": "current_location",
+    "当前情景": "current_location", "当前地点": "current_location",
     "道具": "items",
 }
 

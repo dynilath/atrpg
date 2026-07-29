@@ -28,7 +28,7 @@ SCHEMAS["characters"] = {
         "equipment":       {"type": "list", "item_type": "str"},
         "color":           {"type": "int", "range": [0, 360]},
         "status":          {"type": "enum", "values": ["待确认", "正式", "退场"]},
-        "current_scene":   {"type": "str"},
+        "current_location":   {"type": "str"},
         "current_status":  {"type": "str"},
         "owner_openid":    {"type": "str"},
     },
@@ -52,7 +52,7 @@ SCHEMAS["npcs"] = {
         "appearance":      {"type": "str"},
         "personality":     {"type": "str"},
         "speaking_style":  {"type": "str"},
-        "current_scene":   {"type": "str"},
+        "current_location":   {"type": "str"},
     },
     "defaults": {
         "type": "NPC",

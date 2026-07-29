@@ -30,7 +30,7 @@ export default function CharacterCard({ onUnbind }: CharacterCardProps) {
         setChar({
           name: data.meta?.name || data.meta?.title || charSlug,
           identity: data.meta?.brief || data.meta?.identity || "",
-          scene_slug: data.meta?.current_scene || null,
+          scene_slug: data.meta?.current_location || null,
         });
       })
       .catch(() => { if (!cancelled) setChar(null); })

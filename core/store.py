@@ -113,8 +113,9 @@ _FIELD_MAP: dict[str, str] = {
     # 情境 / 角色 专用
     "地点": "location",
     "在场者": "attendees",
-    "当前场景": "current_scene",
-    "当前情景": "current_scene",
+    "当前地点": "current_location",
+    "当前场景": "current_location",
+    "当前情景": "current_location",
     # 道具
     "道具": "items",  # 弧光“关联要素”子键
 }
@@ -662,45 +663,45 @@ class Store:
 
     # ---------- 位置追踪 ----------
     def char_current_scene(self, char_slug: str) -> str | None:
-        """读角色文件的 current_scene 字段（首要来源）。"""
+        """读角色文件的 current_location 字段（首要来源）。"""
         d = self.read("characters", char_slug)
         if d is None:
             return None
-        return d[0].get("current_scene")
+        return d[0].get("current_location")
 
     def npc_current_scene(self, npc_slug: str) -> str | None:
-        """读 NPC 文件的 current_scene 字段。"""
+        """读 NPC 文件的 current_location 字段。"""
         d = self.read("npcs", npc_slug)
         if d is None:
             return None
-        return d[0].get("current_scene")
+        return d[0].get("current_location")
 
     def set_char_current_scene(self, char_slug: str, scene_slug: str) -> None:
-        """写角色文件的 current_scene 字段。"""
+        """写角色文件的 current_location 字段。"""
         d = self.read("characters", char_slug)
         if d is None:
             raise StoreError(f"角色 {char_slug} 不存在")
         meta, body = d
-        meta["current_scene"] = scene_slug
+        meta["current_location"] = scene_slug
         self.write("characters", char_slug, meta, body)
 
     def set_npc_current_scene(self, npc_slug: str, scene_slug: str) -> None:
-        """写 NPC 文件的 current_scene 字段。"""
+        """写 NPC 文件的 current_location 字段。"""
         d = self.read("npcs", npc_slug)
         if d is None:
             raise StoreError(f"NPC {npc_slug} 不存在")
         meta, body = d
-        meta["current_scene"] = scene_slug
+        meta["current_location"] = scene_slug
         self.write("npcs", npc_slug, meta, body)
 
     def who_in_scene(self, scene_slug: str) -> tuple[list[str], list[str]]:
         """扫描所有角色和 NPC 文件，返回 (角色slug列表, NPC slug列表)。"""
         chars, npcs = [], []
         for d in self.list_docs("characters"):
-            if d["meta"].get("current_scene") == scene_slug:
+            if d["meta"].get("current_location") == scene_slug:
                 chars.append(d["slug"])
         for d in self.list_docs("npcs"):
-            if d["meta"].get("current_scene") == scene_slug:
+            if d["meta"].get("current_location") == scene_slug:
                 npcs.append(d["slug"])
         return chars, npcs
 
@@ -722,11 +723,11 @@ class Store:
         """扫描所有角色和 NPC 文件，返回 slug → 情景 slug。"""
         result: dict[str, str] = {}
         for d in self.list_docs("characters"):
-            cs = d["meta"].get("current_scene")
+            cs = d["meta"].get("current_location")
             if cs:
                 result[d["slug"]] = cs
         for d in self.list_docs("npcs"):
-            cs = d["meta"].get("current_scene")
+            cs = d["meta"].get("current_location")
             if cs:
                 result[d["slug"]] = cs
         return result
@@ -741,7 +742,7 @@ class Store:
         return s.char_scene_map.get(char_slug)
 
     def set_char_scene(self, group_id: str, char_slug: str, scene_slug: str) -> None:
-        """写角色文件的 current_scene（同时同步 session map 以保持兼容）。"""
+        """写角色文件的 current_location（同时同步 session map 以保持兼容）。"""
         self.set_char_current_scene(char_slug, scene_slug)
         s = self.get_session(group_id)
         s.char_scene_map[char_slug] = scene_slug
@@ -796,11 +797,3 @@ class Store:
         s.last_active = datetime.now().strftime("%Y-%m-%d %H:%M")
         self.write("sessions", s.group_id, s.to_meta(), "")
 
-    def char_scene(self, group_id: str, char_slug: str) -> str | None:
-        s = self.get_session(group_id)
-        return s.char_scene_map.get(char_slug)
-
-    def set_char_scene(self, group_id: str, char_slug: str, scene_slug: str) -> None:
-        s = self.get_session(group_id)
-        s.char_scene_map[char_slug] = scene_slug
-        self.save_session(s)

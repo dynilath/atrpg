@@ -205,6 +205,8 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                             "reply_preview": result.reply_preview,
                             "usage": result.usage,
                             "turn_messages": result.turn_messages,
+                            "llm_calls": result.llm_calls,
+                            "total_msgs": result.total_msgs,
                         },
                     )
                     # 通知所有 WS 客户端（控制台刷新）
@@ -218,6 +220,8 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                                 "player_text": text[:120],
                                 "reply_preview": result.reply_preview,
                                 "usage": result.usage,
+                                "llm_calls": result.llm_calls,
+                                "total_msgs": result.total_msgs,
                                 "branch_id": node["branch_id"],
                                 "parent_id": node["parent_id"],
                             },
@@ -232,6 +236,8 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                     "replied": result.replied,
                     "reply_preview": result.reply_preview,
                     "usage": result.usage,
+                    "llm_calls": result.llm_calls,
+                    "total_msgs": result.total_msgs,
                     "error": result.error,
                 },
             })

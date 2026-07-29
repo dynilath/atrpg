@@ -273,6 +273,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
     # ── 工具调用循环（流式：reply 工具被调用时立即发送）──
     schemas = tool_schemas()
+    llm_call_count = 0
     logger.info(f"准备调用 LLM: model={llm.config().model} messages={len(messages)} tools={len(schemas)}")
     for _ in range(MAX_TOOL_ROUNDS):
         try:
@@ -283,6 +284,8 @@ async def process_turn(input: TurnInput) -> TurnResult:
                 result.error = "LLM 调用失败"
             break
 
+        llm_call_count += 1
+
         # 累加 token 用量
         u = assistant.usage
         if u:
@@ -291,10 +294,12 @@ async def process_turn(input: TurnInput) -> TurnResult:
                 "completion_tokens": ctx.last_usage.get("completion_tokens", 0) + u.get("completion_tokens", 0),
                 "cached_tokens": ctx.last_usage.get("cached_tokens", 0) + u.get("cached_tokens", 0),
             }
+            _p = ctx.last_usage['prompt_tokens']
+            _c = ctx.last_usage['cached_tokens']
+            _o = ctx.last_usage['completion_tokens']
             logger.info(
-                f"LLM 用量(本轮累计): prompt={ctx.last_usage['prompt_tokens']} "
-                f"cached={ctx.last_usage['cached_tokens']}/{ctx.last_usage['prompt_tokens']} "
-                f"completion={ctx.last_usage['completion_tokens']}"
+                f"LLM call#{llm_call_count}: prompt={_p} "
+                f"cached={_c}/{_p} completion={_o}"
             )
 
         messages.append(llm.assistant_to_message(assistant))
@@ -334,6 +339,8 @@ async def process_turn(input: TurnInput) -> TurnResult:
                 logger.exception("重试轮 LLM 调用失败")
                 break
 
+            llm_call_count += 1
+
             u = assistant.usage
             if u:
                 ctx.last_usage["prompt_tokens"] = ctx.last_usage.get("prompt_tokens", 0) + u.get("prompt_tokens", 0)
@@ -362,30 +369,28 @@ async def process_turn(input: TurnInput) -> TurnResult:
             ctx.reply_preview = "（AI 未生成回复，请重试）"
             logger.warning("重试后 LLM 仍拒绝调 reply，已发送固定提示")
 
-    # ── 提取发送人名用于快照 meta ──
-    sender_name = ""
-    _sf = sender_frame
-    if 'sender="' in _sf:
-        sender_name = _sf.split('sender="', 1)[1].split('"', 1)[0]
-
     # ── 计算本轮增量消息用于快照（不含 system 前缀）──
     stored_messages = messages[1:]  # 剥离 system，只存对话部分
     turn_delta = stored_messages[turn_user_idx - 1:]  # turn_user_idx 含 system，减 1 对齐
 
+    ctx_msgs = len(stored_messages)
     logger.info(
-        f"快照准备: total_msgs={len(messages)} stored={len(stored_messages)} "
+        f"快照准备: total_msgs={len(messages)} stored={ctx_msgs} "
         f"turn_user_idx={turn_user_idx} delta={len(turn_delta)} "
         f"delta_roles={[m['role'] for m in turn_delta[:3]]}"
     )
 
-    meta = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "sender": sender_name,
-        "player_text": input.text[:120],
-        "reply_preview": ctx.reply_preview,
-        "usage": ctx.last_usage,
-        "turn_messages": turn_delta,
-    }
+    # ── 本轮结束 token 汇总日志 ──
+    _u = ctx.last_usage
+    _p = _u.get("prompt_tokens", 0)
+    _c = _u.get("cached_tokens", 0)
+    _o = _u.get("completion_tokens", 0)
+    _m = _p - _c  # 未命中缓存
+    _t = _p + _o  # 总计
+    logger.info(
+        f"LLM 本轮结束: calls={llm_call_count} ctx_msgs={ctx_msgs} "
+        f"总计:{_t}(命中:{_c}/未命中:{_m}/输入:{_p}/输出:{_o})"
+    )
 
     # ── 填充结果 ──
     result.replied = ctx.replied
@@ -393,5 +398,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
     result.usage = ctx.last_usage
     result.messages = stored_messages
     result.turn_messages = turn_delta
+    result.llm_calls = llm_call_count
+    result.total_msgs = ctx_msgs
 
     return result

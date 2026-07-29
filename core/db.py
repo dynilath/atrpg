@@ -288,6 +288,8 @@ def session_list_turns(root: Path) -> list[dict]:
                 "player_text": meta.get("player_text", ""),
                 "reply_preview": meta.get("reply_preview", ""),
                 "usage": meta.get("usage", {}),
+                "llm_calls": meta.get("llm_calls", 0),
+                "total_msgs": meta.get("total_msgs", 0),
                 "branch_name": r["branch_name"] or "",
                 "branch_id": r["branch_id"] or "",
             })

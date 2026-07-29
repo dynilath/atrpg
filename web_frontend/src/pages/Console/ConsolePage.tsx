@@ -14,6 +14,8 @@ interface TurnSummary {
   player_text: string;
   reply_preview: string;
   usage: Record<string, number>;
+  llm_calls: number;
+  total_msgs: number;
   branch_name: string;
   branch_id: string;
 }

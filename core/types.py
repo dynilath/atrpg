@@ -52,4 +52,6 @@ class TurnResult:
     usage: dict[str, int] = field(default_factory=dict)
     messages: list[dict[str, Any]] = field(default_factory=list)
     turn_messages: list[dict[str, Any]] = field(default_factory=list)
+    llm_calls: int = 0
+    total_msgs: int = 0
     error: str = ""

@@ -57,5 +57,7 @@ async def gm_chat(body: dict[str, Any]):
         "reply_preview": result.reply_preview,
         "replies": collected_replies,
         "usage": result.usage,
+        "llm_calls": result.llm_calls,
+        "total_msgs": result.total_msgs,
         "error": result.error,
     })

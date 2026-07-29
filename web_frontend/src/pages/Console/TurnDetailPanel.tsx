@@ -25,7 +25,7 @@ interface TurnDetail {
 
 interface TurnDetailPanelProps {
   turnId: string;
-  turns?: Array<{ id: string; turn_no: number; usage: Record<string, number> }>;
+  turns?: Array<{ id: string; turn_no: number; usage: Record<string, number>; llm_calls: number; total_msgs: number }>;
   onBranchCreated?: () => void;
   isCurrent?: boolean;
 }
@@ -35,11 +35,9 @@ function fmtUsage(usage?: Record<string, number>): string {
   const prompt = usage.prompt_tokens || 0;
   const completion = usage.completion_tokens || 0;
   const cached = usage.cached_tokens || 0;
+  const uncached = prompt - cached;
   const total = prompt + completion;
-  const rate = prompt > 0 && cached > 0
-    ? `，缓存命中率 ${(cached / prompt * 100).toFixed(1)}%`
-    : "";
-  return `词元：${(total / 1000).toFixed(1)}k  输入 ${(prompt / 1000).toFixed(1)}k  缓存 ${(cached / 1000).toFixed(1)}k  输出 ${(completion / 1000).toFixed(1)}k${rate}`;
+  return `词元 总计:${(total / 1000).toFixed(1)}k(命中:${(cached / 1000).toFixed(1)}k/未命中:${(uncached / 1000).toFixed(1)}k/输入:${(prompt / 1000).toFixed(1)}k/输出:${(completion / 1000).toFixed(1)}k)`;
 }
 
 function renderToolArgs(args: string): string {
@@ -129,6 +127,10 @@ export default function TurnDetailPanel({ turnId, turns, onBranchCreated, isCurr
           {usageStr}
         </div>
       )}
+      <div className="flex gap-4 text-xs text-muted-foreground mb-4">
+        <span>LLM 调用: <b className="text-fg">{turnMeta?.llm_calls ?? "?"}</b> 轮</span>
+        <span>上下文总量: <b className="text-fg">{turnMeta?.total_msgs ?? "?"}</b> 条消息</span>
+      </div>
       <label className="flex items-center gap-2 text-xs text-muted-foreground mb-4 cursor-pointer select-none">
         <input
           type="checkbox"

@@ -130,7 +130,7 @@ async def draft_character(
     ctx.store.write(
         "characters", slug,
         {"name": name, "type": "玩家角色", "identity": identity, "status": "待确认",
-         "slug": slug, "owner_openid": ctx.member_openid, "color": hue},
+         "owner_openid": ctx.member_openid, "color": hue},
         char_body,
     )
 
@@ -242,7 +242,7 @@ async def move_character_scene(ctx: ToolContext, char_slug: str, new_scene_slug:
 )
 async def create_npc(ctx: ToolContext, slug: str, name: str, identity: str, description: str) -> str:
     body = f"## {name}\n\n- **身份**：{identity}\n\n{description}\n"
-    ctx.store.write("npcs", slug, {"name": name, "identity": identity, "nature": "支撑剧情", "slug": slug}, body)
+    ctx.store.write("npcs", slug, {"name": name, "identity": identity, "nature": "支撑剧情"}, body)
     return f"NPC {name}（{slug}）已落盘：data/npcs/{slug}.md"
 
 
@@ -260,7 +260,7 @@ async def create_npc(ctx: ToolContext, slug: str, name: str, identity: str, desc
     },
 )
 async def create_item(ctx: ToolContext, slug: str, name: str, description: str) -> str:
-    ctx.store.write("items", slug, {"name": name, "nature": "支撑剧情", "slug": slug}, f"## {name}\n\n{description}\n")
+    ctx.store.write("items", slug, {"name": name, "nature": "支撑剧情"}, f"## {name}\n\n{description}\n")
     return f"道具 {name}（{slug}）已落盘：data/items/{slug}.md"
 
 
@@ -282,7 +282,7 @@ async def create_item(ctx: ToolContext, slug: str, name: str, description: str) 
 )
 async def create_scene(ctx: ToolContext, slug: str, name: str, description: str, location: str = "") -> str:
     body = f"## 情境描写\n\n{description}\n\n## 对话与行动记录\n（游戏开始后由主持人追加）\n"
-    ctx.store.write("scenes", slug, {"name": name, "nature": "支撑剧情 / 可回收", "location": location, "slug": slug}, body)
+    ctx.store.write("scenes", slug, {"name": name, "nature": "支撑剧情 / 可回收", "location": location}, body)
     return f"情境 {name}（{slug}）已落盘：data/scenes/{slug}.md"
 
 
@@ -300,7 +300,7 @@ async def create_scene(ctx: ToolContext, slug: str, name: str, description: str,
     },
 )
 async def create_location(ctx: ToolContext, slug: str, name: str, description: str) -> str:
-    ctx.store.write("locations", slug, {"name": name, "slug": slug}, f"## {name}\n\n{description}\n")
+    ctx.store.write("locations", slug, {"name": name}, f"## {name}\n\n{description}\n")
     return f"地点 {name}（{slug}）已落盘：data/locations/{slug}.md"
 
 
@@ -338,7 +338,7 @@ async def record_state(
         f"- 弧光：{affected_arcs or '游离事件'}\n- 阶段：{arc_stage or '---'}\n"
         f"- 后续钩子：{hooks or '---'}\n\n## 详细\n\n{detail}\n"
     )
-    ctx.store.write("state-records", name, {"date": date, "title": title, "type": change_type, "slug": name}, body)
+    ctx.store.write("state-records", name, {"date": date, "title": title, "type": change_type}, body)
     return f"状态记录已落盘：data/state-records/{name}.md"
 
 

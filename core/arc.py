@@ -123,7 +123,6 @@ def plan_arc(
 
     meta: dict[str, Any] = {
         "name": title,
-        "slug": slug,
         "level": level,
         "planner": "主持人",
         "source": "涌现",

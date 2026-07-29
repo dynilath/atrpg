@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from server.deps import get_store
 from core.llm import chat
 from core.store import _parse_doc, slugify
+from core.editor_tools import dispatch as dispatch_editor_tool, editor_tool_schemas
 from .file_parser import parse_to_txt, read_uploaded_text
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,39 @@ router = APIRouter(prefix="/api/editor", tags=["editor"])
 
 # 编辑助手 system prompt 缓存
 _EDITOR_RUNTIME: str | None = None
+
+# 工具使用说明（注入 system prompt）
+_EDITOR_TOOL_INSTRUCTIONS = """
+## 编辑工具
+
+你现在可以调用以下工具来**直接操作游戏文件**，而不只是生成文本：
+
+### 核心编辑
+- `read_doc` — 读取文件（返回解析后的 meta + body + 自动校验结果）。修改文件前请先读取。
+- `write_doc` — 创建新文件或覆盖已有文件。提供 kind/slug/meta/body。
+- `patch_meta` — **修改 front matter 字段（推荐）**。只传要改的字段，其余保持不变。不可改 slug/updated。
+- `patch_body` — 在 Markdown 正文中精确插入/替换/删除（按标题定位，如 "## 基础信息"）。
+- `search_docs` — 跨文件搜索（文本关键词 + 元数据过滤）。
+
+### Front Matter 规范化
+- `validate_doc` — 按类型 schema 校验单个文件的 front matter。
+- `normalize_doc` — 自动修复（补全默认值、修正枚举值、从正文提取信息）。默认清理冗余 slug。
+- `validate_all` — 批量校验整个项目，生成报告。
+- `normalize_all` — 批量自动修复。默认 dry_run=true（先预览），确认后设 dry_run=false 执行。
+
+### 辅助
+- `list_docs` — 列出文件（含关键字段摘要）。
+- `delete_doc` — 删除文件（不可逆，谨慎）。
+- `rename_doc` — 重命名文件（自动更新其他文件中的引用）。
+
+### 工具使用原则
+1. **优先使用精确工具**：改一个字段用 `patch_meta`，不要 `write_doc` 重写整个文件。
+2. **写入前先读取**：修改文件前先 `read_doc` 了解当前内容。
+3. **批量操作先预览**：`normalize_all` 先用 `dry_run=true`。
+4. **创建新文件用 `write_doc`**：你需要提供完整的 meta 字典和 Markdown body。
+5. **校验反馈已自动提供**：`read_doc`、`write_doc`、`patch_meta` 返回时已自动包含 validation 结果。
+6. **slug 是文件名**：不要尝试通过 `patch_meta` 修改 slug，改名请用 `rename_doc`。
+"""
 
 
 def _load_editor_runtime() -> str:
@@ -471,7 +505,7 @@ async def editor_chat(body: dict[str, Any]):
     templates = _load_all_templates()
     uploaded_text = read_uploaded_text(Path(s.root) / ".atrpg" / "uploads")
 
-    system_content = f"{runtime}\n\n{templates}\n\n## 已有内容概况\n\n{existing}"
+    system_content = f"{runtime}\n\n{templates}\n\n{_EDITOR_TOOL_INSTRUCTIONS}\n\n## 已有内容概况\n\n{existing}"
     if uploaded_text:
         system_content += f"\n\n{uploaded_text}"
 
@@ -483,19 +517,65 @@ async def editor_chat(body: dict[str, Any]):
 
     from core.llm import client, config
     c = config()
+
+    # 保存 user 消息
+    history.append({"role": "user", "content": message})
+
+    reply_parts: list[str] = []
     try:
-        resp = await client().chat.completions.create(
-            model=c.model,
-            messages=llm_messages,
-            temperature=0.8,
-        )
-        reply = resp.choices[0].message.content or ""
+        # ---- Tool-calling 循环 ----
+        max_tool_rounds = 15
+        for _ in range(max_tool_rounds):
+            resp = await client().chat.completions.create(
+                model=c.model,
+                messages=llm_messages,
+                temperature=0.8,
+                tools=editor_tool_schemas(),
+                tool_choice="auto",
+            )
+            msg = resp.choices[0].message
+
+            # 如果 LLM 返回了文本回复
+            if msg.content:
+                reply_parts.append(msg.content)
+
+            # 如果没有 tool calls，结束循环
+            if not msg.tool_calls:
+                llm_messages.append({"role": "assistant", "content": msg.content or ""})
+                break
+
+            # 执行 tool calls
+            llm_messages.append({
+                "role": "assistant",
+                "content": msg.content or None,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                    }
+                    for tc in msg.tool_calls
+                ],
+            })
+
+            for tc in msg.tool_calls:
+                tool_result = await dispatch_editor_tool(s, tc)
+                llm_messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": tool_result,
+                })
+
+        reply = "\n\n".join(reply_parts)
+        if not reply and not msg.tool_calls:
+            reply = "(未生成回复)"
+
     except Exception as e:
         logger.exception("编辑器聊天 LLM 调用失败")
         return JSONResponse({"error": f"LLM 调用失败: {e}"}, status_code=500)
 
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": reply})
+    # 保存 assistant 消息到历史（简化版：只保存文本，不保存 tool_calls 细节）
+    history.append({"role": "assistant", "content": reply or "(已执行工具操作)"})
     _save_editor_chat(s.root, history)
 
     logger.info(f"编辑器聊天: user_msg={message[:40]!r} reply_len={len(reply)}")

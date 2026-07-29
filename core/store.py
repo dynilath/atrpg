@@ -389,7 +389,6 @@ class Store:
     def write(self, kind: str, slug: str, meta: dict[str, Any], body: str) -> Path:
         """写入文档（覆盖）。自动补生成时间戳。"""
         meta = {**meta}
-        meta.setdefault("slug", slug)
         meta.setdefault("updated", datetime.now().strftime("%Y-%m-%d %H:%M"))
         p = self._path(kind, slug)
         content = _dump_doc(meta, body)

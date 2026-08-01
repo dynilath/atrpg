@@ -1,11 +1,18 @@
-"""llm.py --- OpenAI 兼容 LLM 客户端封装。
+"""llm.py --- OpenAI 兼容 LLM 客户端封装（多模型 / 工作场景）。
+
+模型管理采用「模型库 + 工作场景」分离模式（见 core/config.py）：
+- 模型库：多个 ModelProfile，每项含 base_url/api_key/model/thinking 等参数。
+- 工作场景：chat / utility / utility_large / embedding 等，通过名称引用模型库中的配置。
 
 提供两种调用：
-- chat(system, user)：一次性文本对话，无工具。
-- chat_with_tools(messages, tools)：单步工具调用循环。返回助手消息（可能含
-  tool_calls），由调用方决定是否继续循环。
+- chat(system, user, workflow="chat")：一次性文本对话，无工具。
+- chat_with_tools(messages, tools, workflow="chat")：单步工具调用循环。
 
-配置从 core.config 读取。
+思考参数：
+- profile.thinking=True → extra_body={"thinking": {"type": "enabled"}}
+- profile.reasoning_effort 非空 → extra_body={"reasoning_effort": <值>}
+
+客户端按 (base_url, api_key) 缓存，支持不同模型使用不同厂商端点。
 """
 
 from __future__ import annotations
@@ -16,35 +23,47 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from .config import ModelProfile, load_config, resolve_profile
+
 logger = logging.getLogger(__name__)
-_client: AsyncOpenAI | None = None
+_clients: dict[tuple[str, str], AsyncOpenAI] = {}
 
 
-@dataclass
-class LLMConfig:
-    base_url: str
-    api_key: str
-    model: str
-    utility_model: str
+def _client_for(profile: ModelProfile) -> AsyncOpenAI:
+    """按 (base_url, api_key) 取客户端（多厂商共存）。"""
+    key = (profile.base_url, profile.api_key)
+    if key not in _clients:
+        _clients[key] = AsyncOpenAI(base_url=profile.base_url, api_key=profile.api_key, timeout=60.0)
+    return _clients[key]
 
 
-def config() -> LLMConfig:
-    from .config import load_config
-    cfg = load_config()
-    return LLMConfig(
-        base_url=cfg.llm_base_url,
-        api_key=cfg.llm_api_key,
-        model=cfg.llm_model,
-        utility_model=cfg.llm_utility_model,
-    )
+def client(workflow: str = "chat") -> AsyncOpenAI:
+    """取 chat 工作流（或指定工作流）对应模型的客户端。
+
+    兼容旧调用（无参）：返回 chat 工作流的客户端。
+    """
+    return _client_for(resolve_profile(workflow))
 
 
-def client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
-        c = config()
-        _client = AsyncOpenAI(base_url=c.base_url, api_key=c.api_key, timeout=60.0)
-    return _client
+def completion_kwargs(p: ModelProfile) -> dict[str, Any]:
+    """构造模型请求的公共 kwargs（temperature/max_tokens/思考参数）。
+
+    供自定义工具循环（如 editor_chat）复用，避免重复实现思考参数逻辑。
+    """
+    kwargs: dict[str, Any] = {
+        "temperature": p.temperature if p.temperature is not None else 0.8,
+    }
+    if p.max_tokens:
+        kwargs["max_tokens"] = p.max_tokens
+
+    extra: dict[str, Any] = {}
+    if p.thinking:
+        extra["thinking"] = {"type": "enabled"}
+    if p.reasoning_effort:
+        extra["reasoning_effort"] = p.reasoning_effort
+    if extra:
+        kwargs["extra_body"] = extra
+    return kwargs
 
 
 @dataclass
@@ -75,17 +94,21 @@ class AssistantMessage:
         return bool(self.tool_calls)
 
 
-async def chat(system: str, user: str, model: str | None = None) -> str:
-    """一次对话调用，返回纯文本回复（无工具）。"""
-    c = config()
-    m = model or c.model
-    resp = await client().chat.completions.create(
-        model=m,
+async def chat(system: str, user: str, *, workflow: str = "chat") -> str:
+    """一次对话调用，返回纯文本回复（无工具）。
+
+    workflow: 工作场景名（chat/utility/utility_large/embedding 等），
+    决定使用模型库中的哪个配置。
+    """
+    p = resolve_profile(workflow)
+    kwargs = completion_kwargs(p)
+    resp = await _client_for(p).chat.completions.create(
+        model=p.model,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        temperature=0.8,
+        **kwargs,
     )
     return resp.choices[0].message.content or ""
 
@@ -93,11 +116,13 @@ async def chat(system: str, user: str, model: str | None = None) -> str:
 async def chat_with_tools(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]],
-    model: str | None = None,
+    *,
+    workflow: str = "chat",
 ) -> AssistantMessage:
     """单步工具调用：把当前 messages 发给模型，返回助手这一步的输出。
 
     - tools：OpenAI 兼容的函数工具 schema 列表。
+    - workflow：工作场景名（默认 chat）。
     - 返回 AssistantMessage；若 tool_calls 非空，调用方应执行工具、把
       tool 结果以 {"role":"tool", "tool_call_id":..., "content":...} 追加到
       messages，然后再次调用本函数继续循环。
@@ -105,14 +130,14 @@ async def chat_with_tools(
     """
     import json
 
-    c = config()
-    m = model or c.model
-    logger.info(f"LLM call: model={m} msgs={len(messages)} tools={len(tools)}")
-    resp = await client().chat.completions.create(
-        model=m,
+    p = resolve_profile(workflow)
+    kwargs = completion_kwargs(p)
+    logger.info(f"LLM call: workflow={workflow} model={p.model} msgs={len(messages)} tools={len(tools)}")
+    resp = await _client_for(p).chat.completions.create(
+        model=p.model,
         messages=messages,
         tools=tools,
-        temperature=0.8,
+        **kwargs,
     )
     msg = resp.choices[0].message
     content = msg.content or ""

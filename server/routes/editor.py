@@ -19,7 +19,8 @@ from server.deps import get_store
 from core.llm import chat
 from core.store import _parse_doc, slugify
 from core.editor_tools import dispatch as dispatch_editor_tool, editor_tool_schemas
-from .file_parser import parse_to_txt, read_uploaded_text
+from core.doc_analysis import build_index as build_upload_index, index_summary as upload_index_summary
+from .file_parser import parse_to_txt
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/editor", tags=["editor"])
@@ -50,6 +51,15 @@ _EDITOR_TOOL_INSTRUCTIONS = """
 - `list_docs` — 列出文件（含关键字段摘要）。
 - `delete_doc` — 删除文件（不可逆，谨慎）。
 - `rename_doc` — 重命名文件（自动更新其他文件中的引用）。
+
+### 上传文档分析（渐进式披露）
+用户上传的参考文档（PDF/DOC，解析后存 .atrpg/uploads/*.txt）**不会全文注入**，
+system prompt 中只有轻量索引（文件名/字符数/章节/预览）。需要细节时按需调用：
+- `read_upload` — 读取文档片段（offset/length 或 section 章节定位），**不要整篇读**。
+- `search_upload` — 关键词检索，返回命中片段与位置。
+- `analyze_upload` — 让独立分析会话消化整篇文档，报告落盘 .analysis.md，不占主对话上下文。
+  适合「根据这份设定集生成素材」类需要整体理解的场景。
+- 索引里未出现的文件名，先 `search_upload` 确认 txt 名。
 
 ### 工具使用原则
 1. **优先使用精确工具**：改一个字段用 `patch_meta`，不要 `write_doc` 重写整个文件。
@@ -503,11 +513,12 @@ async def editor_chat(body: dict[str, Any]):
     runtime = _load_editor_runtime()
     existing = _build_existing_summary(s)
     templates = _load_all_templates()
-    uploaded_text = read_uploaded_text(Path(s.root) / ".atrpg" / "uploads")
+    # 上传文档只注入轻量索引（渐进式披露），全文按需经 read_upload/search_upload/analyze_upload 获取
+    upload_summary = upload_index_summary(Path(s.root) / ".atrpg" / "uploads")
 
     system_content = f"{runtime}\n\n{templates}\n\n{_EDITOR_TOOL_INSTRUCTIONS}\n\n## 已有内容概况\n\n{existing}"
-    if uploaded_text:
-        system_content += f"\n\n{uploaded_text}"
+    if upload_summary:
+        system_content += f"\n\n{upload_summary}"
 
     llm_messages = [
         {"role": "system", "content": system_content}
@@ -515,8 +526,9 @@ async def editor_chat(body: dict[str, Any]):
         {"role": "user", "content": message}
     ]
 
-    from core.llm import client, config
-    c = config()
+    from core.llm import _client_for, completion_kwargs, resolve_profile
+    profile = resolve_profile("chat")
+    req_kwargs = completion_kwargs(profile)
 
     # 保存 user 消息
     history.append({"role": "user", "content": message})
@@ -526,12 +538,12 @@ async def editor_chat(body: dict[str, Any]):
         # ---- Tool-calling 循环 ----
         max_tool_rounds = 15
         for _ in range(max_tool_rounds):
-            resp = await client().chat.completions.create(
-                model=c.model,
+            resp = await _client_for(profile).chat.completions.create(
+                model=profile.model,
                 messages=llm_messages,
-                temperature=0.8,
                 tools=editor_tool_schemas(),
                 tool_choice="auto",
+                **req_kwargs,
             )
             msg = resp.choices[0].message
 
@@ -685,6 +697,12 @@ async def upload_file(file: UploadFile = File(...)):
     txt_path = parse_to_txt(dest)
     parsed = bool(txt_path)
 
+    # 刷新上传文档索引（轻量，供编辑助手上下文注入）
+    try:
+        build_upload_index(upload_dir)
+    except Exception:
+        logger.warning("编辑器上传后刷新文档索引失败", exc_info=True)
+
     return JSONResponse({
         "ok": True,
         "filename": safe_name,
@@ -748,5 +766,14 @@ async def delete_upload(filename: str):
     txt = dest.with_suffix(".txt")
     if txt.exists():
         txt.unlink()
+    # 同时删除关联的分析报告
+    analysis = dest.with_suffix(".analysis.md")
+    if analysis.exists():
+        analysis.unlink()
+    # 刷新索引
+    try:
+        build_upload_index(upload_dir)
+    except Exception:
+        logger.warning("编辑器删除后刷新文档索引失败", exc_info=True)
     logger.info(f"编辑器删除上传文件: {filename}")
     return JSONResponse({"ok": True})

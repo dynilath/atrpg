@@ -10,9 +10,11 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from . import schemas, schema_validator, schema_normalizer, store as store_mod
+from . import doc_analysis, schemas, schema_validator, schema_normalizer, store as store_mod
+from .llm import chat as llm_chat
 
 logger = logging.getLogger(__name__)
 
@@ -960,4 +962,137 @@ async def rename_doc(store: store_mod.Store, kind: str, old_slug: str, new_slug:
         "old_path": str(old_path),
         "new_path": str(new_path),
         "references_updated": refs_updated,
+    }, ensure_ascii=False)
+
+
+# ===========================================================================
+# D 类：上传文档分析工具（渐进式披露：索引常驻、全文按需、消化独立）
+# ===========================================================================
+
+def _upload_dir(store: store_mod.Store) -> Path:
+    return Path(store.root) / ".atrpg" / "uploads"
+
+
+@editor_tool(
+    "read_upload",
+    "按需读取已上传参考文档（.atrpg/uploads/*.txt）的片段。"
+    "**不要一次性读取整篇文档**：system prompt 中已有上传文档索引，"
+    "需要细节时用本工具读局部片段（默认 4000 字符，上限 8000）。"
+    "filename 可用 txt 名或原始文件名；可用 section 传章节关键词（如 '第一章'）自动定位，"
+    "或传 offset 字符偏移 + length 长度。返回含位置信息，便于连续续读。",
+    {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "上传文档名（txt 名或原始文件名）",
+            },
+            "offset": {
+                "type": "integer",
+                "description": "字符偏移起点（默认 0；提供 section 时忽略）",
+            },
+            "length": {
+                "type": "integer",
+                "description": "读取字符数（默认 4000，上限 8000）",
+            },
+            "section": {
+                "type": "string",
+                "description": "章节关键词（如 '第一章 种族'），定位到第一个出现处开始读",
+            },
+        },
+        "required": ["filename"],
+    },
+)
+async def read_upload(store: store_mod.Store, filename: str, offset: int = 0,
+                      length: int = 4000, section: str = "") -> str:
+    return doc_analysis.read_section(_upload_dir(store), filename, offset, length, section)
+
+
+@editor_tool(
+    "search_upload",
+    "在已上传参考文档中关键词检索，返回匹配片段（含位置与文件名）。"
+    "适合定位某个人名/地名/概念出现在哪些文档的哪里；命中后再用 read_upload 精读上下文。",
+    {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "搜索关键词（大小写不敏感）",
+            },
+            "filename": {
+                "type": "string",
+                "description": "限定搜索的文档（txt 名或原始文件名，留空搜索全部）",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "最大返回片段数（默认 5）",
+            },
+        },
+        "required": ["query"],
+    },
+)
+async def search_upload(store: store_mod.Store, query: str, filename: str = "", limit: int = 5) -> str:
+    return doc_analysis.search(_upload_dir(store), query, filename, limit)
+
+
+@editor_tool(
+    "analyze_upload",
+    "让一条独立的文档分析会话消化整篇上传文档，生成结构化 Markdown 分析报告并落盘"
+    "（.atrpg/uploads/<txt>.analysis.md），**不占用主对话上下文**。"
+    "适合『根据这份设定集/小说片段生成素材』『帮我理解这篇文档』等需要整体理解的场景。"
+    "单篇上限约 6 万字符；超长文档请用 read_upload/search_upload 分段精读。",
+    {
+        "type": "object",
+        "properties": {
+            "filename": {
+                "type": "string",
+                "description": "上传文档（txt 名或原始文件名）",
+            },
+            "task": {
+                "type": "string",
+                "description": "分析任务描述（可选；默认提取核心设定要点与可复用素材）",
+            },
+        },
+        "required": ["filename"],
+    },
+)
+async def analyze_upload(store: store_mod.Store, filename: str, task: str = "") -> str:
+    upload_dir = _upload_dir(store)
+    txt_path, text, truncated = doc_analysis.load_full_text(upload_dir, filename)
+    if txt_path is None or not text.strip():
+        return json.dumps({
+            "ok": False,
+            "error": f"未找到可分析的文档 '{filename}'（或内容为空）。可用 search_upload 确认 txt 名。",
+        }, ensure_ascii=False)
+
+    runtime_path = Path(__file__).resolve().parent / "doc_analysis_runtime.md"
+    try:
+        runtime = runtime_path.read_text(encoding="utf-8")
+    except OSError as e:
+        return json.dumps({"ok": False, "error": f"加载分析提示词失败: {e}"}, ensure_ascii=False)
+
+    default_task = ("提取文档的核心设定要点与可复用素材"
+                    "（角色/NPC/地点/物品/术语/情景片段/弧光线索），"
+                    "按 doc-analysis-runtime 的输出要求生成分析报告。")
+    user_prompt = f"## 分析任务\n{task or default_task}\n\n## 文档全文（{len(text):,} 字符）\n\n{text}"
+
+    try:
+        reply = await llm_chat(runtime, user_prompt, workflow="utility")
+    except Exception as e:
+        logger.exception("analyze_upload 独立分析调用失败")
+        return json.dumps({"ok": False, "error": f"独立分析调用失败: {e}"}, ensure_ascii=False)
+    if not reply.strip():
+        return json.dumps({"ok": False, "error": "独立分析返回为空"}, ensure_ascii=False)
+
+    analysis_path = txt_path.with_name(txt_path.stem + ".analysis.md")
+    analysis_path.write_text(reply, encoding="utf-8")
+
+    return json.dumps({
+        "ok": True,
+        "report_path": str(analysis_path),
+        "chars_analyzed": len(text),
+        "truncated": truncated,
+        "report_head": reply[:300] + ("…" if len(reply) > 300 else ""),
+        "hint": "报告已落盘。需要时可将报告中的素材逐条用 write_doc 转成 ATRPG 文档；"
+                "也可以 read_upload 直接读该 .analysis.md 报告。",
     }, ensure_ascii=False)

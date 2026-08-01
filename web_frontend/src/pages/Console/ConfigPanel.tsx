@@ -1,23 +1,43 @@
 import { useEffect, useState } from "react";
 import { apiGet } from "../../api/client";
 
-interface AIConfig {
-  model: string;
-  endpoint: string;
+interface ModelProfile {
+  name: string;
+  base_url: string;
   api_key: string;
+  model: string;
+  thinking: boolean;
+  temperature?: number | null;
+  max_tokens?: number | null;
+  reasoning_effort?: string | null;
 }
+
+type Workflows = Record<string, string>;
+
+// 内置工作场景（键 → 中文标签）
+const WORKFLOW_DEFS: { key: string; label: string; hint: string }[] = [
+  { key: "chat", label: "对话", hint: "主持人对局 / 编辑助手对话等主模型" },
+  { key: "utility", label: "轻量任务", hint: "文档消化、摘要、标题生成等" },
+  { key: "utility_large", label: "大上下文任务", hint: "长文档处理（可选）" },
+  { key: "embedding", label: "向量嵌入", hint: "检索向量化（可选）" },
+];
 
 interface ConfigPanelProps {
   section: "ai" | "qqbot";
 }
 
 export default function ConfigPanel({ section }: ConfigPanelProps) {
-  const [aiConfig, setAiConfig] = useState<AIConfig | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiSaving, setAiSaving] = useState(false);
-  const [models, setModels] = useState<string[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [showFullForm, setShowFullForm] = useState(false);
+  // ---- 模型库 ----
+  const [models, setModels] = useState<ModelProfile[]>([]);
+  const [workflows, setWorkflows] = useState<Workflows>({});
+  const [modelsSaved, setModelsSaved] = useState(false);
+  const [wfSaved, setWfSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // ---- 模型列表获取（下拉选择提示） ----
+  const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
+  const [fetching, setFetching] = useState<Record<string, boolean>>({});
 
   // QQ Bot
   const [qrUrl, setQrUrl] = useState<string | null>(null);
@@ -28,48 +48,98 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
   const [qqConfig, setQqConfig] = useState<{ app_id?: string; client_secret?: string }>({});
 
   useEffect(() => {
-    apiGet<AIConfig>("/api/config/ai").then((c) => {
-      setAiConfig(c);
-      if (c.endpoint && c.api_key) fetchModels(c.endpoint, c.api_key);
+    apiGet<{ models: ModelProfile[] }>("/api/config/models").then((d) => {
+      setModels(d.models || []);
+    }).catch(() => {});
+    apiGet<{ workflows: Workflows }>("/api/config/workflows").then((d) => {
+      setWorkflows(d.workflows || {});
     }).catch(() => {});
     apiGet<Record<string, string>>("/api/config/qqbot").then(setQqConfig).catch(() => {});
   }, []);
 
-  const fetchModels = async (endpoint: string, apiKey: string) => {
-    setModelsLoading(true);
+  // ---------- 模型库 ----------
+
+  const updateModel = (idx: number, patch: Partial<ModelProfile>) => {
+    setModels((list) => list.map((m, i) => (i === idx ? { ...m, ...patch } : m)));
+  };
+
+  const addModel = () => {
+    const base = `model-${models.length + 1}`;
+    setModels((list) => [...list, {
+      name: base,
+      base_url: "",
+      api_key: "",
+      model: "",
+      thinking: false,
+    }]);
+  };
+
+  const removeModel = (idx: number) => {
+    setModels((list) => list.filter((_, i) => i !== idx));
+  };
+
+  const fetchModelList = async (idx: number) => {
+    const m = models[idx];
+    if (!m.base_url || !m.api_key) return;
+    setFetching((f) => ({ ...f, [idx]: true }));
     try {
-      const r = await fetch(`${endpoint}/models`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+      const r = await fetch(`${m.base_url}/models`, {
+        headers: { Authorization: `Bearer ${m.api_key}` },
       });
       if (!r.ok) throw new Error(await r.text());
       const data = await r.json();
-      const list = (data.data || data).map((m: any) => m.id || m.name || String(m)).filter(Boolean);
-      setModels(list);
-    } catch {
-      setModels([]);
+      const list = (data.data || data).map((x: any) => x.id || x.name || String(x)).filter(Boolean);
+      setModelOptions((o) => ({ ...o, [idx]: list }));
+    } catch (e: any) {
+      setError(`获取模型列表失败: ${e.message}`);
     } finally {
-      setModelsLoading(false);
+      setFetching((f) => ({ ...f, [idx]: false }));
     }
   };
 
-  const saveAi = async () => {
-    if (!aiConfig) return;
-    setAiSaving(true);
+  const saveModels = async () => {
+    setSaving(true);
+    setError(null);
     try {
-      const r = await fetch("/api/config/ai", {
+      const r = await fetch("/api/config/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(aiConfig),
+        body: JSON.stringify({ models }),
       });
-      if (!r.ok) throw new Error(await r.text());
-      setAiError(null);
-      setShowFullForm(false);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || await r.text());
+      setModels(data.models || models);
+      setModelsSaved(true);
+      setTimeout(() => setModelsSaved(false), 2000);
     } catch (e: any) {
-      setAiError(e.message);
+      setError(e.message);
     } finally {
-      setAiSaving(false);
+      setSaving(false);
     }
   };
+
+  const saveWorkflows = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/config/workflows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workflows }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || await r.text());
+      setWorkflows(data.workflows || workflows);
+      setWfSaved(true);
+      setTimeout(() => setWfSaved(false), 2000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ---------- QQ Bot ----------
 
   const startQr = async () => {
     setQrError(null);
@@ -112,115 +182,191 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     setQrStatus("");
   };
 
+  const inputCls =
+    "bg-bg border border-border rounded px-3 py-2 text-fg text-sm outline-none focus:border-primary placeholder:text-muted-foreground/50";
+
   return (
-    <div className="p-4 space-y-6 max-w-xl">
+    <div className="p-4 space-y-6 max-w-2xl">
       {section === "ai" && (
         <section>
-          <h3 className="text-h4 font-heading text-fg mb-3">AI 接口配置</h3>
+          <h3 className="text-h4 font-heading text-fg mb-1">模型管理</h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            模型库与工作场景分开设置：先在模型库添加多个模型配置（含思考参数），
+            再为每个工作场景选择要使用的模型。
+          </p>
 
-          {/* 已配置摘要 */}
-          {aiConfig?.endpoint && !showFullForm ? (
-            <div className="space-y-3">
-              <div className="bg-surface-dim rounded-lg p-4 space-y-2">
-                <div className="flex gap-2 text-sm">
-                  <span className="text-muted-foreground shrink-0">API 地址：</span>
-                  <code className="text-fg">{aiConfig.endpoint}</code>
-                </div>
-                <div className="flex gap-2 text-sm">
-                  <span className="text-muted-foreground shrink-0">API Key：</span>
-                  <span className="text-muted-foreground">{"•".repeat(16)}</span>
-                </div>
-                <div className="flex gap-2 text-sm">
-                  <span className="text-muted-foreground shrink-0">模型：</span>
-                  <span className="text-fg font-medium">{aiConfig.model || "（未设置）"}</span>
-                </div>
-              </div>
+          {/* 模型库 */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium text-fg">模型库</h4>
               <button
-                onClick={() => setShowFullForm(true)}
-                className="px-4 py-2 text-sm border border-border rounded-md hover:bg-surface-dim"
+                onClick={addModel}
+                className="px-3 py-1.5 text-xs border border-border rounded-md text-muted-foreground hover:text-fg"
               >
-                修改配置
+                + 添加模型
               </button>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="text-muted-foreground">API 地址</span>
-                <input
-                  placeholder=""
-                  className="bg-bg border border-border rounded px-3 py-2 text-fg text-sm outline-none focus:border-primary"
-                  value={aiConfig?.endpoint || ""}
-                  onChange={(e) => setAiConfig((c) => ({ ...c!, endpoint: e.target.value }))}
-                />
-              </label>
 
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="text-muted-foreground">API Key</span>
-                <input
-                  type="password"
-                  placeholder={aiConfig?.api_key ? "••••••••••••••••" : ""}
-                  className="bg-bg border border-border rounded px-3 py-2 text-fg text-sm outline-none focus:border-primary placeholder:text-muted-foreground/50"
-                  value={aiConfig?.api_key || ""}
-                  onChange={(e) => setAiConfig((c) => ({ ...c!, api_key: e.target.value }))}
-                />
-              </label>
+            {models.length === 0 && (
+              <div className="text-sm text-muted-foreground bg-surface-dim rounded-lg p-4">
+                尚未添加模型。点击「+ 添加模型」创建一个配置。
+              </div>
+            )}
 
-              <label className="flex flex-col gap-1 text-sm">
-                <span className="text-muted-foreground">模型</span>
-                <div className="flex gap-2">
+            {models.map((m, idx) => (
+              <div key={idx} className="border border-border rounded-lg p-3 space-y-2 bg-surface-dim/40">
+                <div className="flex gap-2 items-center">
                   <input
-                    className="flex-1 bg-bg border border-border rounded px-3 py-2 text-fg text-sm outline-none focus:border-primary"
-                    value={aiConfig?.model || ""}
-                    onChange={(e) => setAiConfig((c) => ({ ...c!, model: e.target.value }))}
-                    placeholder="deepseek-chat"
+                    className={`${inputCls} flex-1`}
+                    placeholder="配置名称（如 deepseek-main）"
+                    value={m.name}
+                    onChange={(e) => updateModel(idx, { name: e.target.value })}
                   />
                   <button
-                    onClick={() => {
-                      if (aiConfig?.endpoint && aiConfig?.api_key) {
-                        fetchModels(aiConfig.endpoint, aiConfig.api_key);
-                      }
-                    }}
-                    disabled={!aiConfig?.endpoint || !aiConfig?.api_key}
-                    className="px-3 py-2 text-xs border border-border rounded text-muted-foreground hover:text-fg disabled:opacity-30 shrink-0"
+                    onClick={() => removeModel(idx)}
+                    className="px-2 py-1 text-xs text-error border border-error/30 rounded hover:bg-error/10 shrink-0"
                   >
-                    {modelsLoading ? "..." : "获取列表"}
+                    删除
                   </button>
                 </div>
-                {models.length > 0 && (
-                  <div className="mt-1 max-h-32 overflow-y-auto border border-border rounded bg-bg">
-                    {models.map((m) => (
+                <input
+                  className={`${inputCls} w-full`}
+                  placeholder="API 地址，如 https://api.deepseek.com"
+                  value={m.base_url}
+                  onChange={(e) => updateModel(idx, { base_url: e.target.value })}
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    className={`${inputCls} flex-1`}
+                    placeholder={m.api_key ? "••••••••••••••••" : "API Key"}
+                    value={m.api_key}
+                    onChange={(e) => updateModel(idx, { api_key: e.target.value })}
+                  />
+                  <input
+                    className={`${inputCls} flex-1`}
+                    placeholder="模型 ID，如 deepseek-v4-pro"
+                    value={m.model}
+                    onChange={(e) => updateModel(idx, { model: e.target.value })}
+                  />
+                  <button
+                    onClick={() => fetchModelList(idx)}
+                    disabled={!m.base_url || !m.api_key}
+                    className="px-3 py-2 text-xs border border-border rounded text-muted-foreground hover:text-fg disabled:opacity-30 shrink-0"
+                  >
+                    {fetching[idx] ? "..." : "获取列表"}
+                  </button>
+                </div>
+                {modelOptions[idx] && modelOptions[idx].length > 0 && (
+                  <div className="max-h-28 overflow-y-auto border border-border rounded bg-bg">
+                    {modelOptions[idx].map((mid) => (
                       <div
-                        key={m}
+                        key={mid}
                         className="px-3 py-1.5 text-sm cursor-pointer hover:bg-surface-dim text-muted-foreground hover:text-fg"
-                        onClick={() => setAiConfig((c) => ({ ...c!, model: m }))}
+                        onClick={() => updateModel(idx, { model: mid })}
                       >
-                        {m}
+                        {mid}
                       </div>
                     ))}
                   </div>
                 )}
-              </label>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={saveAi}
-                  disabled={aiSaving}
-                  className="px-4 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-50"
-                >
-                  {aiSaving ? "保存中..." : "保存"}
-                </button>
-                {showFullForm && aiConfig?.endpoint && (
-                  <button
-                    onClick={() => setShowFullForm(false)}
-                    className="px-4 py-2 text-sm border border-border rounded-md text-muted-foreground hover:text-fg"
-                  >
-                    取消
-                  </button>
-                )}
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!m.thinking}
+                      onChange={(e) => updateModel(idx, { thinking: e.target.checked })}
+                      className="accent-primary"
+                    />
+                    启用思考（reasoning）
+                  </label>
+                  <input
+                    className={`${inputCls} w-36`}
+                    placeholder="temperature"
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="2"
+                    value={m.temperature ?? ""}
+                    onChange={(e) =>
+                      updateModel(idx, {
+                        temperature: e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                  />
+                  <input
+                    className={`${inputCls} w-32`}
+                    placeholder="max_tokens"
+                    type="number"
+                    min="1"
+                    value={m.max_tokens ?? ""}
+                    onChange={(e) =>
+                      updateModel(idx, {
+                        max_tokens: e.target.value === "" ? null : Number(e.target.value),
+                      })
+                    }
+                  />
+                  <input
+                    className={`${inputCls} w-32`}
+                    placeholder="reasoning_effort"
+                    value={m.reasoning_effort ?? ""}
+                    onChange={(e) =>
+                      updateModel(idx, { reasoning_effort: e.target.value || null })
+                    }
+                  />
+                </div>
               </div>
-              {aiError && <div className="text-error text-xs">{aiError}</div>}
-            </div>
-          )}
+            ))}
+
+            <button
+              onClick={saveModels}
+              disabled={saving}
+              className="px-4 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "保存模型库"}
+            </button>
+            {modelsSaved && <span className="text-success text-xs ml-2">已保存</span>}
+          </div>
+
+          {/* 工作场景映射 */}
+          <div className="mt-8 space-y-3">
+            <h4 className="text-sm font-medium text-fg">工作场景</h4>
+            <p className="text-xs text-muted-foreground">
+              为每个工作场景选择使用模型库中的哪个配置。
+            </p>
+            {WORKFLOW_DEFS.map((w) => (
+              <div key={w.key} className="flex items-center gap-3">
+                <div className="w-36 shrink-0">
+                  <div className="text-sm text-fg">{w.label}</div>
+                  <div className="text-xs text-muted-foreground">{w.hint}</div>
+                </div>
+                <select
+                  className={`${inputCls} flex-1`}
+                  value={workflows[w.key] ?? ""}
+                  onChange={(e) =>
+                    setWorkflows((wf) => ({ ...wf, [w.key]: e.target.value }))
+                  }
+                >
+                  <option value="">（未设置）</option>
+                  {models.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.name} — {m.model || "（未填模型 ID）"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            <button
+              onClick={saveWorkflows}
+              disabled={saving}
+              className="px-4 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "保存工作场景"}
+            </button>
+            {wfSaved && <span className="text-success text-xs ml-2">已保存</span>}
+          </div>
+
+          {error && <div className="text-error text-xs mt-3">{error}</div>}
         </section>
       )}
 

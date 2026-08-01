@@ -241,7 +241,59 @@ def _write_toml(cfg: dict[str, Any]) -> None:
     """把配置 dict 写回 config.toml（用 tomli_w 序列化）。"""
     import tomli_w
     CONFIG_PATH.write_text(tomli_w.dumps(cfg), encoding="utf-8")
+    _sync_models_toml(cfg.get("atrpg", {}))
     print(f"\n✓ 配置已写入 {CONFIG_PATH}")
+
+
+def _sync_models_toml(atrpg: dict[str, Any]) -> None:
+    """同步模型配置到 models.toml（模型库 + 工作场景）。
+
+    新结构下模型由 models.toml 管理；向导仍写 config.toml 旧字段，
+    这里把旧字段同步到 models.toml，避免「向导改了模型但运行时仍用旧配置」。
+    """
+    import tomli_w
+
+    base_url = atrpg.get("llm_base_url", "")
+    api_key = atrpg.get("llm_api_key", "")
+    chat_model = atrpg.get("llm_model", "")
+    util_model = atrpg.get("llm_utility_model", "")
+
+    p = CONFIG_PATH.parent / "models.toml"
+    data: dict[str, Any] = {}
+    if p.exists():
+        try:
+            data = tomllib.loads(p.read_text(encoding="utf-8"))
+        except (tomllib.TOMLDecodeError, OSError):
+            data = {}
+
+    models = data.get("models") or []
+    if not models:
+        models = [{"name": "default", "base_url": "", "api_key": "", "model": "", "thinking": False}]
+        if util_model and util_model != chat_model:
+            models.append({"name": "utility", "base_url": "", "api_key": "", "model": "", "thinking": False})
+
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        if m.get("name") == "default":
+            m["base_url"] = base_url
+            m["api_key"] = api_key
+            m["model"] = chat_model
+        elif m.get("name") == "utility":
+            m["base_url"] = base_url
+            m["api_key"] = api_key
+            m["model"] = util_model or chat_model
+
+    names = [str(m.get("name", "")) for m in models if isinstance(m, dict)]
+    wf = data.get("workflows") or {}
+    if wf.get("chat") not in names:
+        wf["chat"] = "default" if "default" in names else names[0]
+    if wf.get("utility") not in names:
+        wf["utility"] = "utility" if "utility" in names else (wf["chat"])
+    data["models"] = models
+    data["workflows"] = wf
+    p.write_text(tomli_w.dumps(data), encoding="utf-8")
+    print(f"✓ 模型配置已同步 {p.name}")
 
 
 def ensure_config(force: bool = False) -> dict[str, Any]:

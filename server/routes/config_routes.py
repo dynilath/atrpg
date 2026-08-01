@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -45,20 +44,186 @@ def _find_config_toml() -> Path:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# AI 配置（读/写项目根 config.toml 的 [atrpg] 段）
+# 模型库 / 工作场景（读写项目根 models.toml）
+# ═══════════════════════════════════════════════════════════════════
+# 模型管理采用「模型库 + 工作场景」分离：
+#   [[models]]    多个模型配置（name/base_url/api_key/model/thinking 等）
+#   [workflows]   chat/utility/utility_large/embedding → 模型配置名
+
+def _models_path() -> Path:
+    """models.toml 与 config.toml 同目录。"""
+    return _find_config_toml().parent / "models.toml"
+
+
+def _read_models_data() -> dict[str, Any]:
+    """读取 models.toml；不存在或损坏返回空 dict。"""
+    p = _models_path()
+    if p.exists():
+        try:
+            data = tomllib.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except (tomllib.TOMLDecodeError, OSError):
+            logger.warning("models.toml 解析失败，按空处理")
+    return {}
+
+
+def _write_models_data(data: dict[str, Any]) -> None:
+    """用 tomli_w 全量写回 models.toml（保留注释需人工维护，配置页写入结构简单）。"""
+    import tomli_w
+    _models_path().write_text(tomli_w.dumps(data), encoding="utf-8")
+
+
+@router.get("/models")
+async def get_models():
+    """读取模型库（models.toml [[models]]）。无 models.toml 时回退 config.toml 旧字段。"""
+    try:
+        data = _read_models_data()
+        models = data.get("models")
+        if not models:
+            # 兼容：无 models.toml 时从 config.toml 旧字段构造单模型
+            p = _find_config_toml()
+            atrpg = tomllib.loads(p.read_text(encoding="utf-8")).get("atrpg", {})
+            models = [{
+                "name": "default",
+                "base_url": atrpg.get("llm_base_url", ""),
+                "api_key": atrpg.get("llm_api_key", ""),
+                "model": atrpg.get("llm_model", ""),
+                "thinking": False,
+            }]
+        return JSONResponse({"models": models})
+    except Exception as e:
+        return JSONResponse({"models": [], "error": str(e)}, status_code=500)
+
+
+@router.post("/models")
+async def save_models(body: dict[str, Any]):
+    """全量保存模型库到 models.toml。
+
+    body: {"models": [{name, base_url, api_key, model, thinking, temperature?, max_tokens?, reasoning_effort?}]}
+    name 必填且唯一；允许空 base_url（模型库可以先建名称再补参数）。
+    """
+    models = body.get("models")
+    if not isinstance(models, list):
+        return JSONResponse({"error": "models 必须是数组"}, status_code=400)
+
+    cleaned: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for m in models:
+        if not isinstance(m, dict):
+            continue
+        name = str(m.get("name", "")).strip()
+        if not name:
+            return JSONResponse({"error": "每个模型必须有 name"}, status_code=400)
+        if name in seen:
+            return JSONResponse({"error": f"模型名称重复: {name}"}, status_code=400)
+        seen.add(name)
+        entry: dict[str, Any] = {
+            "name": name,
+            "base_url": str(m.get("base_url", "") or ""),
+            "api_key": str(m.get("api_key", "") or ""),
+            "model": str(m.get("model", "") or ""),
+            "thinking": bool(m.get("thinking", False)),
+        }
+        for k in ("temperature", "max_tokens", "reasoning_effort"):
+            if m.get(k) not in (None, ""):
+                entry[k] = m[k]
+        cleaned.append(entry)
+
+    if not cleaned:
+        return JSONResponse({"error": "模型库不能为空"}, status_code=400)
+
+    data = _read_models_data()
+    data["models"] = cleaned
+
+    # 工作场景引用失效修正：引用不存在的模型时改指第一个模型
+    workflows = data.get("workflows") or {}
+    for k, v in list(workflows.items()):
+        if v not in seen:
+            workflows[k] = cleaned[0]["name"]
+    data["workflows"] = workflows
+
+    try:
+        _write_models_data(data)
+    except Exception as e:
+        logger.exception("保存模型库失败")
+        return JSONResponse({"error": f"写入失败: {e}"}, status_code=500)
+    logger.info(f"保存模型库: {[m['name'] for m in cleaned]}")
+    return JSONResponse({"ok": True, "models": cleaned})
+
+
+@router.get("/workflows")
+async def get_workflows():
+    """读取工作场景映射（models.toml [workflows]）。"""
+    try:
+        data = _read_models_data()
+        wf = data.get("workflows")
+        if not wf:
+            # 兼容：回退 config.toml 旧字段语义
+            p = _find_config_toml()
+            atrpg = tomllib.loads(p.read_text(encoding="utf-8")).get("atrpg", {})
+            wf = {"chat": "default", "utility": "default"}
+            if atrpg.get("llm_model"):
+                wf = {"chat": "default", "utility": "default"}
+        return JSONResponse({"workflows": wf})
+    except Exception as e:
+        return JSONResponse({"workflows": {}, "error": str(e)}, status_code=500)
+
+
+@router.post("/workflows")
+async def save_workflows(body: dict[str, Any]):
+    """全量保存工作场景映射到 models.toml。
+
+    body: {"workflows": {"chat": "模型名", "utility": "模型名", ...}}
+    只允许引用模型库中已存在的名称。
+    """
+    wf = body.get("workflows")
+    if not isinstance(wf, dict):
+        return JSONResponse({"error": "workflows 必须是对象"}, status_code=400)
+
+    data = _read_models_data()
+    names = [str(m.get("name", "")) for m in data.get("models", []) if isinstance(m, dict)]
+    if not names:
+        return JSONResponse({"error": "模型库为空，请先保存模型"}, status_code=400)
+
+    cleaned: dict[str, str] = {}
+    for k, v in wf.items():
+        k = str(k).strip()
+        if not k:
+            continue
+        v = str(v or "").strip()
+        # 引用失效（模型被删除等）时自动改指第一个模型，避免配置卡死
+        if v and v not in names:
+            v = names[0]
+        cleaned[k] = v
+
+    data["workflows"] = cleaned
+    try:
+        _write_models_data(data)
+    except Exception as e:
+        logger.exception("保存工作场景失败")
+        return JSONResponse({"error": f"写入失败: {e}"}, status_code=500)
+    logger.info(f"保存工作场景: {cleaned}")
+    return JSONResponse({"ok": True, "workflows": cleaned})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AI 配置（旧端点，兼容保留：读写 chat 工作流模型）
 # ═══════════════════════════════════════════════════════════════════
 
 @router.get("/ai")
 async def get_ai_config():
-    """读取 AI 配置。"""
+    """读取 AI 配置（兼容旧结构：返回 chat 工作流模型的信息）。"""
     try:
-        p = _find_config_toml()
-        data = tomllib.loads(p.read_text(encoding="utf-8"))
-        atrpg = data.get("atrpg", {})
+        data = _read_models_data()
+        models = data.get("models") or []
+        wf = data.get("workflows") or {}
+        chat_name = wf.get("chat") or (models[0]["name"] if models else "default")
+        m = next((x for x in models if x.get("name") == chat_name), models[0] if models else {})
         return JSONResponse({
-            "model": atrpg.get("llm_model", ""),
-            "endpoint": atrpg.get("llm_base_url", ""),
-            "api_key": atrpg.get("llm_api_key", ""),
+            "model": m.get("model", ""),
+            "endpoint": m.get("base_url", ""),
+            "api_key": m.get("api_key", ""),
         })
     except Exception:
         return JSONResponse({"model": "", "endpoint": "", "api_key": ""})
@@ -66,42 +231,24 @@ async def get_ai_config():
 
 @router.post("/ai")
 async def set_ai_config(body: dict[str, str]):
-    """保存 AI 配置到 config.toml（更新 [atrpg] 段）。"""
+    """保存 AI 配置（兼容：更新 chat 工作流模型；无模型库时创建 default 模型）。"""
     try:
-        p = _find_config_toml()
-        raw = p.read_text(encoding="utf-8")
-
-        def _set_key(section: str, key: str, value: str) -> str:
-            """在 TOML 中设定某 key 的值。"""
-            pattern = rf'^(\s*{key}\s*=\s*").*?("\s*)$'
-            new_line = f'{key} = "{value}"'
-            if re.search(pattern, raw, flags=re.MULTILINE):
-                return re.sub(pattern, new_line, raw, flags=re.MULTILINE)
-            # key 不存在：追加到 section 末尾
-            lines = raw.split("\n")
-            result_lines = []
-            in_section = False
-            inserted = False
-            for i, line in enumerate(lines):
-                result_lines.append(line)
-                if line.strip().startswith(f"[{section}]"):
-                    in_section = True
-                    continue
-                if in_section and (line.strip().startswith("[") or i == len(lines) - 1):
-                    if not inserted:
-                        if i == len(lines) - 1:
-                            result_lines.append(new_line)
-                        else:
-                            result_lines.insert(-1, new_line)
-                        inserted = True
-                    in_section = False
-            return "\n".join(result_lines)
-
-        raw = _set_key("atrpg", "llm_base_url", body.get("endpoint", ""))
-        raw = _set_key("atrpg", "llm_api_key", body.get("api_key", ""))
-        raw = _set_key("atrpg", "llm_model", body.get("model", ""))
-
-        p.write_text(raw, encoding="utf-8")
+        data = _read_models_data()
+        models = data.get("models") or []
+        if not models:
+            models = [{"name": "default", "base_url": "", "api_key": "", "model": "", "thinking": False}]
+        m = models[0]
+        m["base_url"] = body.get("endpoint", m.get("base_url", ""))
+        m["api_key"] = body.get("api_key", m.get("api_key", ""))
+        m["model"] = body.get("model", m.get("model", ""))
+        data["models"] = models
+        wf = data.get("workflows") or {}
+        if not wf.get("chat"):
+            wf["chat"] = m["name"]
+        if not wf.get("utility"):
+            wf["utility"] = m["name"]
+        data["workflows"] = wf
+        _write_models_data(data)
         return JSONResponse({"ok": True})
     except Exception as e:
         logger.exception("保存 AI 配置失败")

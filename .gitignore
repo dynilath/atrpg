@@ -10,8 +10,8 @@ web_api/.venv/
 .venv/
 
 # 配置文件（含密钥 AppSecret/LLM key，勿提交）
-config.toml（由 run.py 读取注入 nonebot）
 config.toml
+models.toml
 
 # NoneBot 运行缓存
 .bot_cache/

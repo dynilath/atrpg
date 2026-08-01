@@ -1,0 +1,11 @@
+- [ ] ai使用 `move_character_scene` 工具来移动角色，但实际上角色数据追踪的是location，这导致了数据不一致
+- [ ] 角色 turn 中的数据是scene，这里显示scene是对的，但是和上面的move_character_scene仍然不同步
+- [x] `#082` 到 `#083` 之间的token数有数百k的变化，分析原因。**(v2 corrected)**
+  - 核心发现：T82 和 T83 是**并发运行的兄弟节点**，不是父子节点。两者均从 T81 的 301 条消息起跑，互不可见。
+  - **T82 (C708685D)**: 6 次 LLM 调用, prompt 累计 401K, stored=314, 00:53:38–00:54:58
+  - **T83 (F33AA755)**: 4 次 LLM 调用, prompt 累计 263K, stored=309, 00:54:52 接收消息（T82 仍在跑!）, 加载历史=301
+  - **T84**: load=309（从 T83 继续），T82 的分支被 current.json 覆盖后成为孤儿
+  - 波动全貌: T81→T82→T83→T84 = 863K→401K→263K→543K，峰值到谷底=600K(数百k)，驱动因素是各 turn 的 LLM 调用次数差异极大(4~14)
+  - 机制: `process_turn.py` L286-298 在工具调用循环中累加每次 LLM 调用的 prompt_tokens; `store.py` load_history 从 current.json 读取（无锁，后写覆盖先写）
+- [x] 是不是没有触发cot？
+  - 确认未触发。model=deepseek-v4-pro(chat 模型), llm.py API call 无 reasoning params, 响应无 reasoning_content 解析, completion avg ~500-600/call (CoT 模型通常 5K-20K+/call)

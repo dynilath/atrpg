@@ -217,6 +217,66 @@ atrpg/
 ---
 【已落地】
 - data/xxx/yyy.md （新建/更新）
+
+---
+
+## 8. 编辑助手 Skill 系统
+
+编辑助手（`/api/editor/*`）采用按内容类型拆分的 Skill 架构：
+
+### 8.1 Skill 目录结构
+
+每种剧情要素有独立的 Skill 定义，位于 `skills/editor-{type}/SKILL.md`：
+
+| Skill 目录 | 内容类型 | 说明 |
+|-----------|---------|------|
+| `editor-story-arc/` | story-arcs | 故事弧光设计师 |
+| `editor-character/` | characters | 玩家角色设计师 |
+| `editor-npc/` | npcs | NPC 设计师 |
+| `editor-item/` | items | 物品设计师 |
+| `editor-scene/` | scenes | 情景设计师 |
+| `editor-location/` | locations | 地点设计师 |
+| `editor-terminology/` | terminology | 术语设计师 |
+| `editor-state-record/` | state-records | 状态记录设计师 |
+| `editor-doc-analysis/` | (uploads) | 上传文档分析（已有） |
+
+每个 SKILL.md 包含：专属身份定义、专属模板、可用工具子集、创建指南。
+
+### 8.2 Skill 注册与加载
+
+`core/editor_skills.py` 提供：
+- `load_skill(kind)` — 加载指定内容类型的 Skill
+- `build_skill_system_prompt(kind, ...)` — 构建 Skill Subagent 的完整 system prompt
+- `get_tool_subset(kind)` — 获取 Skill 可用的工具 schema 子集
+- `get_chat_tools()` — 编辑器聊天的全部工具
+
+### 8.3 模型按任务配置
+
+`models.toml` 新增 `[editor_workflows]` 节，允许为每种编辑任务指定倾向模型：
+
+```toml
+[editor_workflows]
+story_arc = ""       # 留空 = 使用 chat workflow 的模型
+character = ""
+npc = "utility"      # NPC 可用轻量模型
+```
+
+空字符串回退到 `[workflows]` 的 `chat` 模型。通过 `resolve_editor_profile(kind)` 解析。
+
+### 8.4 调用链路
+
+```
+用户请求 → EditorPage.tsx (AI生成按钮)
+         → POST /api/editor/{kind}   (结构化生成)
+         → _llm_generate_structured(kind, ...)
+         → build_skill_system_prompt(kind) → Skill 专属 prompt
+         → chat(workflow=_editor_workflow_for(kind)) → 按任务配置的模型
+
+用户请求 → EditorAIPanel.tsx (聊天)
+         → POST /api/editor/chat
+         → editor_runtime.md (轻量路由器)
+         → get_chat_tools() → tool-calling 循环
+```
 - data/zzz/www.md （新建/更新）
 【下一步建议】<给用户的选择或提示>
 ```

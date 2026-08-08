@@ -16,9 +16,16 @@ from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import JSONResponse
 
 from server.deps import get_store
-from core.llm import chat
+from core.llm import chat, _client_for, completion_kwargs
+from core.config import resolve_editor_profile
 from core.store import _parse_doc, slugify
-from core.editor_tools import dispatch as dispatch_editor_tool, editor_tool_schemas
+from core.editor_tools import dispatch as dispatch_editor_tool
+from core.editor_skills import (
+    build_skill_system_prompt,
+    get_chat_tools,
+    KIND_LABELS,
+    KIND_TO_SKILL,
+)
 from core.doc_analysis import build_index as build_upload_index, index_summary as upload_index_summary
 from .file_parser import parse_to_txt
 
@@ -99,16 +106,36 @@ def _load_template(kind: str) -> str:
     return ""
 
 
+def _editor_workflow_for(kind: str) -> str:
+    """将内容类型映射为 editor workflow key，用于 resolve_editor_profile。
+
+    kind (如 "story-arcs") → editor workflow key (如 "story_arc")
+    """
+    _KIND_TO_EWF: dict[str, str] = {
+        "story-arcs": "story_arc",
+        "characters": "character",
+        "npcs": "npc",
+        "items": "item",
+        "scenes": "scene",
+        "locations": "location",
+        "terminology": "terminology",
+        "state-records": "state_record",
+    }
+    return _KIND_TO_EWF.get(kind, "chat")
+
+
 async def _llm_generate(
     system_prompt: str,
     user_prompt: str,
     existing_summary: str = "",
+    workflow: str = "chat",
 ) -> str:
     """调 LLM 生成内容（纯文本，无工具调用）。
 
     返回 LLM 的完整回复文本。
+    workflow: 工作场景名（默认 chat），可传入 editor workflow key。
     """
-    return await chat(system_prompt, user_prompt)
+    return await chat(system_prompt, user_prompt, workflow=workflow)
 
 
 async def _llm_generate_structured(
@@ -116,18 +143,16 @@ async def _llm_generate_structured(
     user_prompt: str,
     store: Any,
 ) -> dict[str, Any] | None:
-    """调 LLM 生成结构化文档内容。
+    """调 LLM 生成结构化文档内容（使用 skill 系统）。
 
     流程：
-    1. 读取已有数据摘要（避免冲突）
-    2. 读取模板（指导输出结构）
+    1. 加载对应 content type 的 skill（含专属 identity + 模板）
+    2. 读取已有数据摘要（避免冲突）
     3. 构造 system + user prompt
     4. 调 LLM 生成
     5. 解析 frontmatter + body
     6. 返回 {slug, meta, body, title}
     """
-    runtime = _load_editor_runtime()
-
     # 已有数据摘要
     existing_docs = store.list_docs(kind)
     existing_summary_lines = [f"已有 {len(existing_docs)} 条："]
@@ -137,21 +162,25 @@ async def _llm_generate_structured(
         existing_summary_lines.append(f"- {d['slug']}: {name}" + (f" ({extra})" if extra else ""))
     existing_summary = "\n".join(existing_summary_lines)
 
-    # 模板参考
-    template_str = _load_template(kind)
-    template_hint = f"\n请参考以下模板结构生成内容：\n\n{template_str}\n" if template_str else ""
+    # 使用 skill 系统构建专属 system prompt（含 identity + 模板 + 已有数据）
+    system_prompt = build_skill_system_prompt(kind, existing_summary=existing_summary)
 
-    system_prompt = (
-        f"{runtime}\n\n"
-        f"## 当前任务\n\n"
-        f"你正在帮用户创建/编辑 {kind} 类型的素材。\n"
-        f"{existing_summary}\n"
-        f"{template_hint}"
+    # 如果 skill 未找到，回退到通用 editor_runtime
+    if not system_prompt:
+        system_prompt = _load_editor_runtime()
+        template_str = _load_template(kind)
+        if template_str:
+            system_prompt += f"\n\n## 模板参考\n\n{template_str}"
+        system_prompt += f"\n\n## 已有内容\n\n{existing_summary}"
+
+    kind_label = KIND_LABELS.get(kind, kind)
+    system_prompt += (
+        f"\n\n## 当前任务\n\n"
+        f"你正在帮用户创建 {kind_label} 类型的素材。\n"
         f"\n## 输出格式（必须遵守）\n\n"
         f"你必须严格按以下格式输出，用 --- 分隔 YAML frontmatter 和 Markdown 正文：\n\n"
         f"---\n"
-        f"名称: <英文名称/name>\n"
-        f"<其他YAML元数据字段，使用英文字段名，每行一个键值对，如：type/identity/nature/level 等>\n"
+        f"<YAML 元数据字段，使用英文字段名，每行一个键值对>\n"
         f"---\n"
         f"\n"
         f"<Markdown 正文内容>\n"
@@ -159,7 +188,9 @@ async def _llm_generate_structured(
         f"不要写 slug 或 updated 字段，这些由系统自动处理。\n"
     )
 
-    full_response = await _llm_generate(system_prompt, user_prompt)
+    full_response = await _llm_generate(
+        system_prompt, user_prompt, workflow=_editor_workflow_for(kind)
+    )
 
     # 解析 frontmatter + body
     meta, body = _parse_doc(full_response)
@@ -512,11 +543,10 @@ async def editor_chat(body: dict[str, Any]):
 
     runtime = _load_editor_runtime()
     existing = _build_existing_summary(s)
-    templates = _load_all_templates()
     # 上传文档只注入轻量索引（渐进式披露），全文按需经 read_upload/search_upload/analyze_upload 获取
     upload_summary = upload_index_summary(Path(s.root) / ".atrpg" / "uploads")
 
-    system_content = f"{runtime}\n\n{templates}\n\n{_EDITOR_TOOL_INSTRUCTIONS}\n\n## 已有内容概况\n\n{existing}"
+    system_content = f"{runtime}\n\n{_EDITOR_TOOL_INSTRUCTIONS}\n\n## 已有内容概况\n\n{existing}"
     if upload_summary:
         system_content += f"\n\n{upload_summary}"
 
@@ -541,7 +571,7 @@ async def editor_chat(body: dict[str, Any]):
             resp = await _client_for(profile).chat.completions.create(
                 model=profile.model,
                 messages=llm_messages,
-                tools=editor_tool_schemas(),
+                tools=get_chat_tools(),
                 tool_choice="auto",
                 **req_kwargs,
             )
@@ -619,21 +649,6 @@ def _build_existing_summary(s) -> str:
                 extra = d["meta"].get("level") or d["meta"].get("identity") or d["meta"].get("category") or ""
                 lines.append(f"- {d['slug']}: {name}" + (f" ({extra})" if extra else ""))
     return "\n".join(lines) if lines else "暂无已有内容"
-
-
-def _load_all_templates() -> str:
-    """加载所有模板文件，作为系统提示的一部分。"""
-    tpl_dir = Path(__file__).resolve().parent.parent.parent / "templates"
-    if not tpl_dir.exists():
-        return ""
-    parts = ["## 模板参考\n"]
-    for p in sorted(tpl_dir.glob("*.md")):
-        try:
-            content = p.read_text(encoding="utf-8")
-            parts.append(f"### {p.stem}\n\n{content}\n")
-        except (OSError, UnicodeDecodeError):
-            pass
-    return "\n".join(parts) if len(parts) > 1 else ""
 
 
 # ---------------------------------------------------------------------------

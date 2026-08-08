@@ -69,6 +69,10 @@ export default function EditorPage() {
   const [worldBookBody, setWorldBookBody] = useState<string>("");
   const [styleGuideBody, setStyleGuideBody] = useState<string>("");
   const [coreDocKind, setCoreDocKind] = useState<"world-book" | "style-guide" | null>(null);
+  // AI 生成
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiResult, setAiResult] = useState<string | null>(null);
 
   const handleSave = useCallback(async () => {
     if (!selectedSlug || !editMeta) return;
@@ -160,6 +164,39 @@ export default function EditorPage() {
     }
   }, []);
 
+  // AI 生成处理
+  const handleAIGenerate = useCallback(async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt) return;
+    setAiGenerating(true);
+    setAiResult(null);
+    setError(null);
+    try {
+      const apiPath = EDITOR_API[activeTab];
+      const body: Record<string, string> = { prompt };
+      // NPCs 需要传 type=npc
+      if (activeTab === "npcs") body.type = "npc";
+      else if (activeTab === "characters") body.type = "pc";
+
+      const r = await fetch(`/api/editor/${apiPath}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || await r.text());
+      setAiResult(`✅ 已创建「${data.title || data.slug}」(${data.slug})`);
+      setAiPrompt("");
+      // 刷新列表并选中新项
+      await loadList(activeTab);
+      if (data.slug) loadDetail(activeTab, data.slug);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setAiGenerating(false);
+    }
+  }, [aiPrompt, activeTab, loadList, loadDetail]);
+
   // 首次加载预取文风和世界书摘要
   useEffect(() => {
     fetch("/api/data/world-book/main")
@@ -212,6 +249,30 @@ export default function EditorPage() {
             />
           ))}
         </SbTabs>
+        {/* AI 快速生成 */}
+        <div className="px-2 py-2 border-b border-border">
+          <div className="flex gap-1.5">
+            <input
+              className="flex-1 bg-bg border border-border rounded px-2 py-1.5 text-xs text-fg outline-none focus:border-primary placeholder:text-muted-foreground/50"
+              placeholder={`描述要创建的${KIND_LABELS[activeTab]}...`}
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !aiGenerating) handleAIGenerate();
+              }}
+            />
+            <button
+              onClick={handleAIGenerate}
+              disabled={aiGenerating || !aiPrompt.trim()}
+              className="px-2.5 py-1.5 text-xs bg-primary text-on-primary rounded hover:bg-accent-hover disabled:opacity-40 shrink-0"
+            >
+              {aiGenerating ? "..." : "AI生成"}
+            </button>
+          </div>
+          {aiResult && (
+            <div className="mt-1.5 text-xs text-success">{aiResult}</div>
+          )}
+        </div>
         <SbList>
           {loading && (
             <div className="p-5 text-muted-foreground text-center">加载中...</div>

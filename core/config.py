@@ -53,6 +53,7 @@ class AppConfig:
     # --- 模型库 / 工作场景（新） ---
     models: list[ModelProfile] = field(default_factory=list)
     workflows: dict[str, str] = field(default_factory=dict)
+    editor_workflows: dict[str, str] = field(default_factory=dict)
     models_toml_path: str = ""
 
 
@@ -133,6 +134,7 @@ def _load_models_toml(config_path: Path, ac: AppConfig) -> None:
         if models:
             ac.models = models
             ac.workflows = {str(k): str(v) for k, v in (mraw.get("workflows") or {}).items()}
+            ac.editor_workflows = {str(k): str(v) for k, v in (mraw.get("editor_workflows") or {}).items()}
         # models 为空：视为无效，落回旧字段（不覆盖 ac.models 默认空）
 
     if not ac.models:
@@ -156,6 +158,7 @@ def _load_models_toml(config_path: Path, ac: AppConfig) -> None:
             )
         ac.models = fallback
         ac.workflows = {"chat": "default", "utility": "utility" if len(fallback) > 1 else "default"}
+        ac.editor_workflows = {}
 
     # 工作场景兜底：chat/utility 必须有效；其余场景空值保留（运行时自动回退第一个模型），
     # 仅修正「非空但引用不存在」的失效配置
@@ -222,9 +225,12 @@ def load_config(config_path: str | Path | None = None) -> AppConfig:
 
 
 def resolve_profile(workflow: str = "chat") -> ModelProfile:
-    """按工作场景名解析模型配置；场景缺失或引用无效时回退到第一个模型。"""
+    """按工作场景名解析模型配置；场景缺失或引用无效时回退到第一个模型。
+
+    同时检查 workflows 和 editor_workflows。
+    """
     ac = load_config()
-    name = ac.workflows.get(workflow, "")
+    name = ac.workflows.get(workflow, "") or ac.editor_workflows.get(workflow, "")
     p = _find_profile(ac, name)
     if p:
         return p
@@ -237,3 +243,32 @@ def workflows_of() -> dict[str, str]:
     """返回工作场景→模型名映射（不含回退修正，供配置页展示）。"""
     ac = load_config()
     return dict(ac.workflows)
+
+
+def resolve_editor_profile(kind: str) -> ModelProfile:
+    """按编辑任务类型解析模型配置。
+
+    查找链：editor_workflows[kind] → workflows["chat"] → models[0]
+    editor_workflow 值为空字符串时，回退到 chat workflow。
+    找不到对应模型时，回退到第一个模型。
+
+    Args:
+        kind: 内容类型 key（story_arc, character, npc, item, scene, location, terminology, state_record）
+
+    Returns:
+        ModelProfile 实例
+    """
+    ac = load_config()
+    name = ac.editor_workflows.get(kind, "")
+    if name:
+        p = _find_profile(ac, name)
+        if p:
+            return p
+    # 回退到 chat workflow
+    return resolve_profile("chat")
+
+
+def editor_workflows_of() -> dict[str, str]:
+    """返回编辑任务→模型名映射（供配置页展示）。"""
+    ac = load_config()
+    return dict(ac.editor_workflows)

@@ -143,6 +143,13 @@ async def save_models(body: dict[str, Any]):
             workflows[k] = cleaned[0]["name"]
     data["workflows"] = workflows
 
+    # 同样修正 editor_workflows 引用
+    editor_wf = data.get("editor_workflows") or {}
+    for k, v in list(editor_wf.items()):
+        if v and v not in seen:
+            editor_wf[k] = ""
+    data["editor_workflows"] = editor_wf
+
     try:
         _write_models_data(data)
     except Exception as e:
@@ -205,6 +212,69 @@ async def save_workflows(body: dict[str, Any]):
         return JSONResponse({"error": f"写入失败: {e}"}, status_code=500)
     logger.info(f"保存工作场景: {cleaned}")
     return JSONResponse({"ok": True, "workflows": cleaned})
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 编辑任务模型映射（[editor_workflows]）
+# ═══════════════════════════════════════════════════════════════════
+
+# 编辑任务定义：key → 中文标签
+EDITOR_WORKFLOW_DEFS: list[dict[str, str]] = [
+    {"key": "story_arc", "label": "故事弧光"},
+    {"key": "character", "label": "玩家角色"},
+    {"key": "npc", "label": "NPC"},
+    {"key": "item", "label": "物品"},
+    {"key": "scene", "label": "情景"},
+    {"key": "location", "label": "地点"},
+    {"key": "terminology", "label": "设定术语"},
+    {"key": "state_record", "label": "状态记录"},
+]
+
+
+@router.get("/editor-workflows")
+async def get_editor_workflows():
+    """读取编辑任务模型映射（models.toml [editor_workflows]）。"""
+    try:
+        data = _read_models_data()
+        ewf = data.get("editor_workflows") or {}
+        return JSONResponse({"editor_workflows": ewf, "defs": EDITOR_WORKFLOW_DEFS})
+    except Exception as e:
+        return JSONResponse({"editor_workflows": {}, "defs": EDITOR_WORKFLOW_DEFS, "error": str(e)}, status_code=500)
+
+
+@router.post("/editor-workflows")
+async def save_editor_workflows(body: dict[str, Any]):
+    """全量保存编辑任务模型映射到 models.toml。
+
+    body: {"editor_workflows": {"story_arc": "模型名", "character": "", ...}}
+    空字符串 = 回退到 chat workflow。
+    """
+    ewf = body.get("editor_workflows")
+    if not isinstance(ewf, dict):
+        return JSONResponse({"error": "editor_workflows 必须是对象"}, status_code=400)
+
+    data = _read_models_data()
+    names = [str(m.get("name", "")) for m in data.get("models", []) if isinstance(m, dict)]
+
+    cleaned: dict[str, str] = {}
+    for k, v in ewf.items():
+        k = str(k).strip()
+        if not k:
+            continue
+        v = str(v or "").strip()
+        # 引用失效时清空（回退到 chat），不强制指向第一个模型
+        if v and names and v not in names:
+            v = ""
+        cleaned[k] = v
+
+    data["editor_workflows"] = cleaned
+    try:
+        _write_models_data(data)
+    except Exception as e:
+        logger.exception("保存编辑任务模型映射失败")
+        return JSONResponse({"error": f"写入失败: {e}"}, status_code=500)
+    logger.info(f"保存编辑任务模型映射: {cleaned}")
+    return JSONResponse({"ok": True, "editor_workflows": cleaned})
 
 
 # ═══════════════════════════════════════════════════════════════════

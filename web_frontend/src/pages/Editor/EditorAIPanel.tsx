@@ -230,9 +230,11 @@ export default function EditorAIPanel() {
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
                 {messages.length === 0 && (
                   <div className="text-center text-muted text-sm mt-24">
-                    向 AI 助手提问，辅助你设计弧光、角色、NPC、物品、情境、地点等。
+                    向 AI 助手提问，辅助你设计弧光、角色、NPC、物品、情景、地点、术语、状态记录等。
                     <br />
-                    <span className="text-[11px]">支持上传 PDF / DOC 参考文件（点击顶部 📎）</span>
+                    <span className="text-[11px]">
+                      每种类型有专属设计师——直接描述需求即可自动匹配
+                    </span>
                   </div>
                 )}
                 {messages.map((m, i) => (

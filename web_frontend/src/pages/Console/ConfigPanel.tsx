@@ -22,6 +22,18 @@ const WORKFLOW_DEFS: { key: string; label: string; hint: string }[] = [
   { key: "embedding", label: "向量嵌入", hint: "检索向量化（可选）" },
 ];
 
+// 编辑任务工作场景（键 → 中文标签）
+const EDITOR_WF_DEFS: { key: string; label: string }[] = [
+  { key: "story_arc", label: "故事弧光" },
+  { key: "character", label: "玩家角色" },
+  { key: "npc", label: "NPC" },
+  { key: "item", label: "物品" },
+  { key: "scene", label: "情景" },
+  { key: "location", label: "地点" },
+  { key: "terminology", label: "设定术语" },
+  { key: "state_record", label: "状态记录" },
+];
+
 interface ConfigPanelProps {
   section: "ai" | "qqbot";
 }
@@ -30,8 +42,10 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
   // ---- 模型库 ----
   const [models, setModels] = useState<ModelProfile[]>([]);
   const [workflows, setWorkflows] = useState<Workflows>({});
+  const [editorWorkflows, setEditorWorkflows] = useState<Workflows>({});
   const [modelsSaved, setModelsSaved] = useState(false);
   const [wfSaved, setWfSaved] = useState(false);
+  const [ewfSaved, setEwfSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -53,6 +67,9 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     }).catch(() => {});
     apiGet<{ workflows: Workflows }>("/api/config/workflows").then((d) => {
       setWorkflows(d.workflows || {});
+    }).catch(() => {});
+    apiGet<{ editor_workflows: Workflows }>("/api/config/editor-workflows").then((d) => {
+      setEditorWorkflows(d.editor_workflows || {});
     }).catch(() => {});
     apiGet<Record<string, string>>("/api/config/qqbot").then(setQqConfig).catch(() => {});
   }, []);
@@ -132,6 +149,27 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
       setWorkflows(data.workflows || workflows);
       setWfSaved(true);
       setTimeout(() => setWfSaved(false), 2000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveEditorWorkflows = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/config/editor-workflows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ editor_workflows: editorWorkflows }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || await r.text());
+      setEditorWorkflows(data.editor_workflows || editorWorkflows);
+      setEwfSaved(true);
+      setTimeout(() => setEwfSaved(false), 2000);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -364,6 +402,44 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
               {saving ? "保存中..." : "保存工作场景"}
             </button>
             {wfSaved && <span className="text-success text-xs ml-2">已保存</span>}
+          </div>
+
+          {/* 编辑任务模型映射 */}
+          <div className="mt-8 space-y-3">
+            <h4 className="text-sm font-medium text-fg">编辑任务模型倾向</h4>
+            <p className="text-xs text-muted-foreground">
+              为每种编辑任务指定倾向的模型（留空则使用「对话」场景的模型）。
+              例如：弧光设计可用创意性强的模型，术语定义可用轻量模型。
+            </p>
+            {EDITOR_WF_DEFS.map((w) => (
+              <div key={w.key} className="flex items-center gap-3">
+                <div className="w-24 shrink-0">
+                  <div className="text-sm text-fg">{w.label}</div>
+                </div>
+                <select
+                  className={`${inputCls} flex-1`}
+                  value={editorWorkflows[w.key] ?? ""}
+                  onChange={(e) =>
+                    setEditorWorkflows((ewf) => ({ ...ewf, [w.key]: e.target.value }))
+                  }
+                >
+                  <option value="">（使用对话场景模型）</option>
+                  {models.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.name} — {m.model || "（未填模型 ID）"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            <button
+              onClick={saveEditorWorkflows}
+              disabled={saving}
+              className="px-4 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "保存编辑任务模型"}
+            </button>
+            {ewfSaved && <span className="text-success text-xs ml-2">已保存</span>}
           </div>
 
           {error && <div className="text-error text-xs mt-3">{error}</div>}

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 CHUNK_SIZE = 1900
 # 工具调用循环最大轮数，防止模型失控无限调工具。
 MAX_TOOL_ROUNDS = 20
+# Tool Output Folding: 旧 tool output 超过此轮次差 → 折叠为标记。
+TOOL_OUTPUT_FOLD_MIN_AGE = 3
+# Tool Output Folding: content 短于此长度的 tool output 不折叠（节省无意义）。
+TOOL_OUTPUT_FOLD_MIN_SIZE = 500
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +211,32 @@ def _split_chunks(replies: list[str]) -> list[str]:
 
 
 # ===========================================================================
+# Tool Output Folding
+# ===========================================================================
+
+def _fold_old_tool_outputs(messages: list[dict[str, Any]], current_turn: int) -> None:
+    """折叠旧的 tool output：超过阈值的内容替换为 (内容已折叠)。
+
+    依赖 tool_result_message 写入的 HTML 注释 <!-- turn:N --> 判断轮次。
+    无标记的旧消息（legacy）跳过不处理。
+    对 messages 原地修改。
+    """
+    for msg in messages:
+        if msg.get("role") != "tool":
+            continue
+        content: str = msg.get("content", "")
+        if len(content) <= TOOL_OUTPUT_FOLD_MIN_SIZE:
+            continue
+        m = re.search(r'<!-- turn:(\d+) -->', content)
+        if not m:
+            continue  # legacy 消息无轮次标记，跳过
+        msg_turn = int(m.group(1))
+        age = current_turn - msg_turn
+        if age > TOOL_OUTPUT_FOLD_MIN_AGE:
+            msg["content"] = "(内容已折叠)"
+
+
+# ===========================================================================
 # 核心处理函数
 # ===========================================================================
 
@@ -236,6 +267,14 @@ async def process_turn(input: TurnInput) -> TurnResult:
         f"加载历史: session={session_key} history_len={len(history)} "
         f"has_body={bool([m for m in history if m.get('role') != 'system'])}"
     )
+
+    # ── 计算当前轮次号（用于 Tool Output Folding 标记）──
+    snap_dir = s.root / ".atrpg" / "sessions" / "snapshots"
+    if snap_dir.exists():
+        existing = sorted(p for p in snap_dir.glob("*.json") if re.match(r'^\d{3}\.json$', p.name))
+        turn_no = len(existing) + 1
+    else:
+        turn_no = 1
 
     # ── 构造 system 前缀（每轮刷新，世界书可能更新）──
     system_prefix = _load_system_prefix(s, input.mode)
@@ -274,6 +313,10 @@ async def process_turn(input: TurnInput) -> TurnResult:
     # ── 工具调用循环（流式：reply 工具被调用时立即发送）──
     schemas = tool_schemas()
     llm_call_count = 0
+
+    # ── Tool Output Folding: 每轮 LLM 调用前折叠旧的 tool output ──
+    _fold_old_tool_outputs(messages, turn_no)
+
     logger.info(f"准备调用 LLM: model={llm.config().model} messages={len(messages)} tools={len(schemas)}")
     for _ in range(MAX_TOOL_ROUNDS):
         try:
@@ -319,7 +362,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
         # 执行工具调用
         for call in assistant.tool_calls:
             tool_result = await dispatch(ctx, call)
-            messages.append(llm.tool_result_message(call.id, tool_result))
+            messages.append(llm.tool_result_message(call.id, tool_result, turn_no=turn_no))
     else:
         # 触达 MAX_TOOL_ROUNDS 仍未收尾
         if not ctx.replied:
@@ -354,7 +397,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
             for call in assistant.tool_calls:
                 tool_result = await dispatch(ctx, call)
-                messages.append(llm.tool_result_message(call.id, tool_result))
+                messages.append(llm.tool_result_message(call.id, tool_result, turn_no=turn_no))
 
             if ctx.replied:
                 logger.info("重试成功：reply 已被调用")

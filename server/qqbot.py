@@ -49,8 +49,9 @@ class QQBotManager:
         await self._api.ensure_token()
 
         # setup HTTP client for async API calls
+        # trust_env=False：QQ Bot 为国内直连服务，绕过系统代理（Clash 等会中断 TLS）
         import httpx
-        self._api.setup(httpx.AsyncClient())
+        self._api.setup(httpx.AsyncClient(trust_env=False))
 
         store = Store(cfg.game_dir)
 

@@ -322,19 +322,37 @@ import urllib.request
 import urllib.error
 
 def _qq_api_post(url: str, body: dict) -> dict:
-    """同步 POST JSON，返回解析后的 dict。"""
+    """同步 POST JSON，返回解析后的 dict。
+
+    显式禁用系统代理（ProxyHandler({})）：QQ Bot 开放平台为国内服务，必须直连。
+    若继承系统 HTTPS_PROXY（如 Clash 等代理软件 127.0.0.1:7890），TLS 链路易被
+    代理中断，表现为 SSL: UNEXPECTED_EOF_WHILE_READING / WinError 10053。
+    """
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "ATRPG/1.0"},
+        headers={
+            "Content-Type": "application/json",
+            # q.qq.com 必需：缺 Accept: application/json 会返回 JS 反爬页面
+            "Accept": "application/json",
+            "User-Agent": "QQBotAdapter/ATRPG (Python; windows)",
+        },
         method="POST",
     )
+    # 不读环境变量代理，强制直连
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with opener.open(req, timeout=30) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
-        return json.loads(e.read().decode("utf-8"))
+        try:
+            return json.loads(e.read().decode("utf-8"))
+        except Exception:
+            return {"retcode": -1, "msg": f"HTTP {e.code} {e.reason}"}
+    except Exception as e:
+        # TLS 中断/超时/DNS 等网络错误也返回结构化结果，避免冒泡成 500
+        return {"retcode": -1, "msg": f"网络错误: {e}"}
 
 
 @router.post("/qqbot/qr/start")
@@ -346,7 +364,8 @@ async def qqbot_qr_start():
     aes_key = base64.b64encode(os.urandom(32)).decode()
 
     data = _qq_api_post(
-        "https://oau.q.qq.com/oauth/bind/task/create",
+        # 注意：必须是 q.qq.com/lite/create_bind_task（oau.q.qq.com 域名不存在）
+        "https://q.qq.com/lite/create_bind_task",
         {"key": aes_key},
     )
     if data.get("retcode") != 0:
@@ -356,7 +375,7 @@ async def qqbot_qr_start():
     if not task_id:
         return JSONResponse({"error": "未获取到 task_id"}, status_code=500)
 
-    qr_url = f"https://q.qq.com/openid-connect/scan?task_id={task_id}"
+    qr_url = f"https://q.qq.com/qqbot/openclaw/connect.html?task_id={task_id}&_wv=2"
 
     _qr_state = {
         "task_id": task_id,
@@ -384,7 +403,7 @@ async def qqbot_qr_status():
         return JSONResponse({"status": "completed", "app_id": _qr_state["app_id"]})
 
     data = _qq_api_post(
-        "https://oau.q.qq.com/oauth/bind/result",
+        "https://q.qq.com/lite/poll_bind_result",
         {"task_id": task_id},
     )
     if data.get("retcode") != 0:
@@ -398,15 +417,14 @@ async def qqbot_qr_status():
         encrypted = d.get("bot_encrypt_secret", "")
         user_openid = d.get("user_openid", "")
 
-        # 解密
+        # 解密（AES-256-GCM：IV 12B | ciphertext | tag 16B，与 SDK 一致）
         try:
             import base64
-            from Crypto.Cipher import AES
-            from Crypto.Util.Padding import unpad
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
             key = base64.b64decode(_qr_state["aes_key"])
-            ct = base64.b64decode(encrypted)
-            cipher = AES.new(key, AES.MODE_ECB)
-            secret = unpad(cipher.decrypt(ct), 16).decode()
+            raw = base64.b64decode(encrypted)
+            iv, ct_with_tag = raw[:12], raw[12:]
+            secret = AESGCM(key).decrypt(iv, ct_with_tag, None).decode("utf-8")
         except Exception:
             secret = encrypted
 

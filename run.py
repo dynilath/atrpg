@@ -23,6 +23,16 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+# QQ Bot 开放平台为国内直连服务：把腾讯域名加入 NO_PROXY，
+# 避免系统代理（Clash 等 127.0.0.1:7890）中断 TLS 导致
+# SSL: UNEXPECTED_EOF_WHILE_READING。海外 LLM API 仍可走代理，互不影响。
+_QQ_NO_PROXY = "qq.com,api.sgroup.qq.com,bots.qq.com"
+_old_no_proxy = os.environ.get("NO_PROXY", "") or os.environ.get("no_proxy", "") or ""
+_merged = (_old_no_proxy + "," + _QQ_NO_PROXY).strip(",")
+_merged = ",".join(dict.fromkeys(x for x in _merged.split(",") if x))  # 去重保序
+os.environ["NO_PROXY"] = _merged
+os.environ["no_proxy"] = _merged
+
 # 确保项目根在 sys.path
 _PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:

@@ -193,6 +193,12 @@ def assistant_to_message(msg: AssistantMessage) -> dict[str, Any]:
     return {"role": "assistant", "content": msg.content}
 
 
-def tool_result_message(tool_call_id: str, content: str) -> dict[str, Any]:
-    """构造工具结果消息（追加到 messages 续接循环）。"""
+def tool_result_message(tool_call_id: str, content: str, turn_no: int | None = None) -> dict[str, Any]:
+    """构造工具结果消息（追加到 messages 续接循环）。
+
+    turn_no 可选：传入时在 content 末尾追加 HTML 注释 <!-- turn:N -->，
+    供 Tool Output Folding 机制识别消息轮次。注释对 LLM 不可见但消耗少量 token。
+    """
+    if turn_no is not None:
+        content = f"{content}\n<!-- turn:{turn_no} -->"
     return {"role": "tool", "tool_call_id": tool_call_id, "content": content}

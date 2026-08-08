@@ -395,17 +395,26 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
             </div>
           ) : qrUrl ? (
             <div className="space-y-3">
-              <div className="bg-white p-2 rounded-md inline-block">
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrUrl)}`}
-                  alt="QQ Bot QR Code"
-                  className="w-48 h-48"
+              <div className="overflow-hidden rounded-lg border border-border bg-white w-fit">
+                <iframe
+                  src={qrUrl}
+                  title="QQ Bot 官方扫码页"
+                  className="w-[340px] h-[600px] block"
+                  loading="eager"
                 />
               </div>
               <div className="text-sm text-muted-foreground">{qrStatus}</div>
               <div className="text-sm">
-                或打开链接：<br />
-                <code className="text-xs break-all text-muted-foreground">{qrUrl}</code>
+                无法显示官方扫码页？可直接打开链接：
+                <br />
+                <a
+                  href={qrUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs break-all text-primary underline"
+                >
+                  {qrUrl}
+                </a>
               </div>
               {qrPolling && (
                 <button

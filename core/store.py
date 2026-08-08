@@ -9,8 +9,11 @@
 - 目录结构可疑（有文件但不像游戏目录）→ 警告但不拒绝
 
 线程/进程安全：Store 使用基于文件创建原子性的跨平台文件锁
-（.atrpg/.lock），保护 write/append_body/save_history 等写操作。
+（.atrpg/.lock），保护 write/append_body 等写操作。
 多进程（如 NoneBot QQ + 独立 Web API 并行）可安全共享 data/ 目录。
+
+对话历史：由 core/context.py + core/db.py 管理（tree_nodes + messages 表），
+本模块不再处理 LLM 会话历史（load_history 委托给 context.build_context）。
 """
 
 from __future__ import annotations
@@ -476,190 +479,27 @@ class Store:
         return ""
 
     # ---------- 运行时缓存（.atrpg/，纯 LLM 对话历史，非数据源）----------
-    def _session_dir(self, session_key: str) -> Path:
-        return self.root / ".atrpg" / "history" / session_key
-
     def load_history(self, session_key: str) -> list[dict[str, Any]]:
-        """加载对话历史：从 .atrpg/sessions/current.json（由 session_save_turn 维护）。"""
-        import json
-        # 统一使用 sessions 目录，不再维护 .atrpg/history/
-        cur = self.root / ".atrpg" / "sessions" / "current.json"
-        if not cur.exists():
-            logger.info(f"load_history: current.json 不存在（首轮或未初始化）")
-            return []
-        try:
-            msgs = json.loads(cur.read_text(encoding="utf-8"))
-            logger.info(f"load_history: {len(msgs)}条")
-        except (json.JSONDecodeError, OSError):
-            logger.warning("load_history: JSON解析失败")
-            return []
-        return self._clean_messages(msgs)
+        """加载对话历史：从树 + messages 表重建（消息粒度化存储）。
 
-    @staticmethod
-    def _clean_messages(msgs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """清洗孤立 tool 消息：保留 assistant(tool_calls) → tool(result) 完整配对。"""
-        cleaned: list[dict[str, Any]] = []
-        pending_call_ids: set[str] = set()
-        for m in msgs:
-            role = m.get("role", "")
-            if role == "assistant" and m.get("tool_calls"):
-                cleaned.append(m)
-                pending_call_ids = {tc.get("id", "") for tc in m["tool_calls"]}
-            elif role == "tool":
-                tcid = m.get("tool_call_id", "")
-                if tcid in pending_call_ids:
-                    cleaned.append(m)
-                    pending_call_ids.discard(tcid)
-            else:
-                pending_call_ids.clear()
-                cleaned.append(m)
-        return cleaned
-
-    def _truncate(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """截断历史（保留首条 system + 最近若干条），保证 tool_calls/tool 配对完整。"""
-        MAX = 120
-        KEEP_RECENT = 80
-        if len(messages) <= MAX:
-            return messages
-        head = messages[:1]
-        cut = len(messages) - KEEP_RECENT
-        while cut < len(messages):
-            msg = messages[cut]
-            role = msg.get("role", "")
-            if role == "tool" or (role == "assistant" and msg.get("tool_calls")):
-                cut += 1
-                continue
-            break
-        tail = messages[cut:]
-        return head + [{"role": "system", "content": "（较早的对话已省略）"}] + tail
-
-    def save_history(
-        self,
-        session_key: str,
-        messages: list[dict[str, Any]],
-        meta: dict[str, Any] | None = None,
-    ) -> None:
-        """保存对话历史：先快照完整版到 snapshots/，再写截断版到 current.json。
-
-        meta 含本轮元信息（turn_no/timestamp/sender/player_text/reply_preview/usage），
-        与完整 messages 一起存进快照，供控制台展示与回滚。
+        session_key 参数保留用于兼容，实际以活跃分支为准。
+        返回不含 system prefix 的对话消息列表。
         """
-        import json
-        sdir = self._session_dir(session_key)
-        snap_dir = sdir / "snapshots"
-        snap_dir.mkdir(parents=True, exist_ok=True)
+        from .config import get_context_config
+        from .context import build_context
+        from .db import session_get_active_branch
 
-        # 计算轮次号
-        existing = sorted(snap_dir.glob("turn-*.json"))
-        turn_no = len(existing) + 1
-
-        # 快照：完整未截断 messages + meta
-        snap = {
-            "turn_no": turn_no,
-            "timestamp": (meta or {}).get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-            "sender": (meta or {}).get("sender", ""),
-            "player_text": (meta or {}).get("player_text", ""),
-            "reply_preview": (meta or {}).get("reply_preview", ""),
-            "usage": (meta or {}).get("usage", {}),
-            "messages": messages,
-        }
-        with _FileLock(self.root / ".atrpg" / ".lock"):
-            (snap_dir / f"turn-{turn_no:03d}.json").write_text(
-                json.dumps(snap, ensure_ascii=False), encoding="utf-8"
-            )
-            # current.json：截断版（供下轮 LLM 续接）
-            cur = sdir / "current.json"
-            truncated = self._truncate(messages)
-            cur.write_text(json.dumps(truncated, ensure_ascii=False), encoding="utf-8")
-        logger.info(
-            f"save_history: {session_key} turn={turn_no} full={len(messages)} "
-            f"truncated={len(truncated)} path={cur}"
+        cfg = get_context_config()
+        branch_id = session_get_active_branch(self.root)
+        msgs = build_context(
+            self.root,
+            branch_id=branch_id,
+            system_prefix="",
+            window_keep=cfg.get("window_keep", 20),
+            window_slide=cfg.get("window_slide", 5),
         )
-
-    def list_sessions(self) -> list[str]:
-        """列出所有有历史的 session key。"""
-        hdir = self.root / ".atrpg" / "history"
-        if not hdir.exists():
-            return []
-        sessions = []
-        for p in sorted(hdir.iterdir()):
-            if p.is_dir() and (p / "current.json").exists():
-                sessions.append(p.name)
-        return sessions
-
-    def list_turns(self, session_key: str) -> list[dict[str, Any]]:
-        """列出某 session 的所有轮次摘要（不含 messages 正文）。"""
-        import json
-        snap_dir = self._session_dir(session_key) / "snapshots"
-        if not snap_dir.exists():
-            return []
-        turns = []
-        for p in sorted(snap_dir.glob("turn-*.json")):
-            try:
-                d = json.loads(p.read_text(encoding="utf-8"))
-                turns.append({
-                    "turn_no": d.get("turn_no"),
-                    "timestamp": d.get("timestamp", ""),
-                    "sender": d.get("sender", ""),
-                    "player_text": d.get("player_text", ""),
-                    "reply_preview": d.get("reply_preview", ""),
-                    "usage": d.get("usage") or {},
-                })
-            except (json.JSONDecodeError, OSError):
-                continue
-        return turns
-
-    def usage_summary(self, session_key: str) -> dict[str, Any]:
-        """汇总某 session 的总用量（累加所有轮次）。"""
-        turns = self.list_turns(session_key)
-        total = {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0, "turns_with_usage": 0, "turns_total": len(turns)}
-        for t in turns:
-            u = t.get("usage") or {}
-            if u:
-                total["prompt_tokens"] += u.get("prompt_tokens", 0)
-                total["completion_tokens"] += u.get("completion_tokens", 0)
-                total["cached_tokens"] += u.get("cached_tokens", 0)
-                total["turns_with_usage"] += 1
-        return total
-
-    def get_turn_detail(self, session_key: str, turn_no: int) -> dict[str, Any] | None:
-        """读取某轮快照的完整内容（含 messages）。"""
-        import json
-        p = self._session_dir(session_key) / "snapshots" / f"turn-{turn_no:03d}.json"
-        if not p.exists():
-            return None
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return None
-
-    def rollback(self, session_key: str, turn_no: int) -> bool:
-        """回滚到某轮：删除该轮之后的快照，把该轮的 messages 写回 current.json。
-
-        回滚到 turn_no 意味着保留 turn_no 及之前的对话，丢弃之后的。
-        """
-        import json
-        sdir = self._session_dir(session_key)
-        snap_dir = sdir / "snapshots"
-        target = snap_dir / f"turn-{turn_no:03d}.json"
-        if not target.exists():
-            return False
-        try:
-            d = json.loads(target.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return False
-        with _FileLock(self.root / ".atrpg" / ".lock"):
-            # 删除之后的快照
-            for p in sorted(snap_dir.glob("turn-*.json")):
-                name = p.stem  # turn-NNN
-                n = int(name.split("-")[1])
-                if n > turn_no:
-                    p.unlink()
-            # 把该轮 messages（截断版）写回 current.json
-            (sdir / "current.json").write_text(
-                json.dumps(self._truncate(d["messages"]), ensure_ascii=False), encoding="utf-8"
-            )
-        return True
+        logger.info(f"load_history: {len(msgs)}条 (branch={branch_id})")
+        return msgs
 
     # ---------- 位置追踪 ----------
     def char_current_scene(self, char_slug: str) -> str | None:

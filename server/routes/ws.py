@@ -192,19 +192,18 @@ async def session_ws(websocket: WebSocket, uid: str = Query("")):
                 except Exception:
                     logger.warning("Bot 回复写入聊天室失败", exc_info=True)
 
-            # 保存 LLM 会话快照
+            # 保存 LLM 会话（消息粒度化存储：只存本轮增量消息）
             try:
-                if result.messages:
+                if result.turn_messages:
                     node = _db.session_save_turn(
                         root,
-                        result.messages,
+                        result.turn_messages,
                         meta={
                             "timestamp": __import__("datetime").datetime.now().isoformat(),
                             "sender": user_display_name,
                             "player_text": text[:120],
                             "reply_preview": result.reply_preview,
                             "usage": result.usage,
-                            "turn_messages": result.turn_messages,
                             "llm_calls": result.llm_calls,
                             "total_msgs": result.total_msgs,
                         },

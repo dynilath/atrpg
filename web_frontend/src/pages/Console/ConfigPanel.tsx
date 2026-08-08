@@ -61,6 +61,11 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
   const [qrInterval, setQrInterval] = useState<ReturnType<typeof setInterval> | null>(null);
   const [qqConfig, setQqConfig] = useState<{ app_id?: string; client_secret?: string }>({});
 
+  // ---- 上下文窗口 ----
+  const [ctxKeep, setCtxKeep] = useState(20);
+  const [ctxSlide, setCtxSlide] = useState(5);
+  const [ctxSaved, setCtxSaved] = useState(false);
+
   useEffect(() => {
     apiGet<{ models: ModelProfile[] }>("/api/config/models").then((d) => {
       setModels(d.models || []);
@@ -72,7 +77,31 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
       setEditorWorkflows(d.editor_workflows || {});
     }).catch(() => {});
     apiGet<Record<string, string>>("/api/config/qqbot").then(setQqConfig).catch(() => {});
+    apiGet<{ window_keep?: number; window_slide?: number }>("/api/config/context").then((d) => {
+      if (typeof d.window_keep === "number") setCtxKeep(d.window_keep);
+      if (typeof d.window_slide === "number") setCtxSlide(d.window_slide);
+    }).catch(() => {});
   }, []);
+
+  const saveContext = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/config/context", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ window_keep: ctxKeep, window_slide: ctxSlide }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || await r.text());
+      setCtxSaved(true);
+      setTimeout(() => setCtxSaved(false), 2000);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // ---------- 模型库 ----------
 
@@ -440,6 +469,46 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
               {saving ? "保存中..." : "保存编辑任务模型"}
             </button>
             {ewfSaved && <span className="text-success text-xs ml-2">已保存</span>}
+          </div>
+
+          {/* 上下文窗口配置 */}
+          <div className="mt-8 space-y-3">
+            <h4 className="text-sm font-medium text-fg">上下文窗口</h4>
+            <p className="text-xs text-muted-foreground">
+              阶梯式滑动窗口：保留最近 N 轮对话后，每累计超出 N 轮就滑掉最早 M 轮
+              （以完整轮次为边界）。滑出的旧轮内容已通过工具落盘到 data/ 文档，
+              主持人可按需查询，不影响世界状态一致性。
+            </p>
+            <div className="flex items-center gap-4">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">保留轮数 (window_keep)</label>
+                <input
+                  className={`${inputCls} w-32`}
+                  type="number"
+                  min="1"
+                  value={ctxKeep}
+                  onChange={(e) => setCtxKeep(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">滑动轮数 (window_slide)</label>
+                <input
+                  className={`${inputCls} w-32`}
+                  type="number"
+                  min="1"
+                  value={ctxSlide}
+                  onChange={(e) => setCtxSlide(Math.max(1, Number(e.target.value) || 1))}
+                />
+              </div>
+            </div>
+            <button
+              onClick={saveContext}
+              disabled={saving}
+              className="px-4 py-2 text-sm bg-primary text-on-primary rounded-md hover:bg-accent-hover disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "保存上下文窗口"}
+            </button>
+            {ctxSaved && <span className="text-success text-xs ml-2">已保存</span>}
           </div>
 
           {error && <div className="text-error text-xs mt-3">{error}</div>}

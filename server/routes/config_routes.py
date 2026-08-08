@@ -385,6 +385,62 @@ async def get_chat_history(before: str = "", limit: int = 50):
 
 
 # ═══════════════════════════════════════════════════════════════════
+# 上下文窗口配置（config.toml [context] 段）
+# ═══════════════════════════════════════════════════════════════════
+
+import re as _re
+
+_CONTEXT_SECTION_RE = _re.compile(r"(?ms)^\[context\]\s*\n.*?(?=^\[|\Z)")
+
+
+def _write_context_config(window_keep: int, window_slide: int) -> None:
+    """写入 config.toml [context] 段（保留其他段与注释）。"""
+    p = _find_config_toml()
+    text = p.read_text(encoding="utf-8")
+    new_section = f"[context]\nwindow_keep = {window_keep}\nwindow_slide = {window_slide}\n"
+    if _CONTEXT_SECTION_RE.search(text):
+        text = _CONTEXT_SECTION_RE.sub(new_section, text, count=1)
+    else:
+        if text and not text.endswith("\n"):
+            text += "\n"
+        text += f"\n{new_section}"
+    p.write_text(text, encoding="utf-8")
+
+
+@router.get("/context")
+async def get_context_config_api():
+    """读取上下文窗口配置（config.toml [context]）。"""
+    from core.config import get_context_config
+    try:
+        return JSONResponse(get_context_config())
+    except Exception as e:
+        return JSONResponse({"window_keep": 20, "window_slide": 5, "error": str(e)}, status_code=500)
+
+
+@router.post("/context")
+async def save_context_config_api(body: dict[str, Any]):
+    """保存上下文窗口配置到 config.toml [context] 段。
+
+    body: {"window_keep": 20, "window_slide": 5}
+    """
+    from core.config import DEFAULT_CONTEXT_KEEP, DEFAULT_CONTEXT_SLIDE
+    try:
+        keep = int(body.get("window_keep", DEFAULT_CONTEXT_KEEP))
+        slide = int(body.get("window_slide", DEFAULT_CONTEXT_SLIDE))
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "window_keep / window_slide 必须是整数"}, status_code=400)
+    if keep <= 0 or slide <= 0:
+        return JSONResponse({"error": "window_keep / window_slide 必须为正整数"}, status_code=400)
+    try:
+        _write_context_config(keep, slide)
+    except Exception as e:
+        logger.exception("保存上下文配置失败")
+        return JSONResponse({"error": f"写入失败: {e}"}, status_code=500)
+    logger.info(f"保存上下文配置: keep={keep} slide={slide}")
+    return JSONResponse({"ok": True, "window_keep": keep, "window_slide": slide})
+
+
+# ═══════════════════════════════════════════════════════════════════
 # QQ Bot QR 扫码绑定（纯标准库，无外部依赖）
 # ═══════════════════════════════════════════════════════════════════
 

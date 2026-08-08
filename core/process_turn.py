@@ -269,10 +269,18 @@ async def process_turn(input: TurnInput) -> TurnResult:
     )
 
     # ── 计算当前轮次号（用于 Tool Output Folding 标记）──
-    snap_dir = s.root / ".atrpg" / "sessions" / "snapshots"
-    if snap_dir.exists():
-        existing = sorted(p for p in snap_dir.glob("*.json") if re.match(r'^\d{3}\.json$', p.name))
-        turn_no = len(existing) + 1
+    # 消息粒度化存储后，轮次号取自 tree_nodes 表
+    from .db import _session_db
+    import sqlite3 as _sqlite3
+
+    _sdb = _session_db(s.root)
+    if _sdb.exists():
+        try:
+            with _sqlite3.connect(str(_sdb)) as _conn:
+                _row = _conn.execute("SELECT MAX(turn_no) FROM tree_nodes").fetchone()
+            turn_no = (_row[0] or 0) + 1
+        except Exception:
+            turn_no = 1
     else:
         turn_no = 1
 

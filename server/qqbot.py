@@ -251,17 +251,16 @@ class QQBotManager:
                 except Exception:
                     pass
 
-        # 保存会话快照
-        if result.messages:
+        # 保存会话（消息粒度化存储：只存本轮增量消息）
+        if result.turn_messages:
             node = _db.session_save_turn(
-                store.root, result.messages,
+                store.root, result.turn_messages,
                 meta={
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
                     "sender": member_openid[:8],
                     "player_text": text[:120],
                     "reply_preview": result.reply_preview,
                     "usage": result.usage,
-                    "turn_messages": result.turn_messages,
                     "llm_calls": result.llm_calls,
                     "total_msgs": result.total_msgs,
                 },
@@ -333,7 +332,7 @@ class QQBotManager:
 
         if result.replied and full_reply:
             self._record_bot_reply(store.root, "".join(full_reply))
-        if result.messages:
+        if result.turn_messages:
             self._save_session_snapshot(store.root, result, text, member_openid)
         if not result.replied:
             try:
@@ -392,14 +391,13 @@ class QQBotManager:
     def _save_session_snapshot(self, root: Path, result, text: str, member_openid: str):
         try:
             _db.session_save_turn(
-                root, result.messages,
+                root, result.turn_messages,
                 meta={
                     "timestamp": __import__("datetime").datetime.now().isoformat(),
                     "sender": member_openid[:8],
                     "player_text": text[:120],
                     "reply_preview": result.reply_preview,
                     "usage": result.usage,
-                    "turn_messages": result.turn_messages,
                     "llm_calls": result.llm_calls,
                     "total_msgs": result.total_msgs,
                 },

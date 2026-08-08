@@ -272,3 +272,41 @@ def editor_workflows_of() -> dict[str, str]:
     """返回编辑任务→模型名映射（供配置页展示）。"""
     ac = load_config()
     return dict(ac.editor_workflows)
+
+
+# ===========================================================================
+# 上下文窗口配置
+# ===========================================================================
+
+# 默认值：基于实测连续跑团数据（冷启动 ~18K tokens，每轮 +~3.6K，
+# 23 轮完整任务 ≈104K tokens）。keep=20 覆盖一个完整任务，slide=5 阶梯滑动。
+DEFAULT_CONTEXT_KEEP = 20
+DEFAULT_CONTEXT_SLIDE = 5
+
+
+def get_context_config() -> dict:
+    """读取 [context] 段配置，返回 {window_keep, window_slide}。
+
+    从 config.toml 的 [context] 段读取；缺省时用默认值。
+    """
+    try:
+        raw = _find_config().read_text(encoding="utf-8")
+        cfg = tomllib.loads(raw)
+    except (OSError, FileNotFoundError, tomllib.TOMLDecodeError):
+        return {"window_keep": DEFAULT_CONTEXT_KEEP, "window_slide": DEFAULT_CONTEXT_SLIDE}
+
+    ctx = cfg.get("context", {})
+    try:
+        keep = int(ctx.get("window_keep", DEFAULT_CONTEXT_KEEP))
+    except (TypeError, ValueError):
+        keep = DEFAULT_CONTEXT_KEEP
+    try:
+        slide = int(ctx.get("window_slide", DEFAULT_CONTEXT_SLIDE))
+    except (TypeError, ValueError):
+        slide = DEFAULT_CONTEXT_SLIDE
+
+    if keep <= 0:
+        keep = DEFAULT_CONTEXT_KEEP
+    if slide <= 0:
+        slide = DEFAULT_CONTEXT_SLIDE
+    return {"window_keep": keep, "window_slide": slide}

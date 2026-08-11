@@ -5,7 +5,7 @@
 
 const BASE = "";
 
-function authHeaders(): Record<string, string> {
+export function authHeaders(): Record<string, string> {
   try {
     const raw = localStorage.getItem("atrpg_user");
     if (!raw) return {};

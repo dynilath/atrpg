@@ -176,7 +176,7 @@ async def finalize_character(ctx: ToolContext, char_slug: str, scene_slug: str) 
     if ctx.send_fn:
         await ctx.send_fn(
             f"✓ 角色已转正式并绑定：data/characters/{char_slug}.md\n"
-            f"✓ 初始情景：{scene_meta.get('name', scene_slug)}"
+            f"✓ 初始情景：{scene[0].get('name', scene_slug)}"
         )
     return f"角色 {meta.get('name', char_slug)}（{char_slug}）已正式落盘并绑定，初始情景 {scene_slug}。"
 

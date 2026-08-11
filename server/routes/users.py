@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from server.deps import get_config, get_store
@@ -120,6 +120,21 @@ def _resolve_permission(provider: str, user_id: str) -> str:
 def _check_admin(x_provider: str, x_user_id: str) -> bool:
     """检查请求方是否为管理员（供其他路由复用）。"""
     return _resolve_permission(x_provider, x_user_id) == "管理员"
+
+
+def require_host(
+    x_provider: str = Header("", alias="X-Provider"),
+    x_user_id: str = Header("", alias="X-User-Id"),
+) -> None:
+    """FastAPI 依赖：要求请求方为管理员或主持人（供编辑/配置/管理路由复用）。
+
+    注意：身份头由客户端自报、无服务端签名，本依赖仅作为权限门槛
+    （从"零鉴权"提升到"需知道主持人/管理员 ID"）；完整会话鉴权待后续引入。
+    """
+    if not x_provider or not x_user_id:
+        raise HTTPException(status_code=401, detail="缺少身份标识")
+    if _resolve_permission(x_provider, x_user_id) not in ("管理员", "主持人"):
+        raise HTTPException(status_code=403, detail="需要主持人或管理员权限")
 
 
 # ═══════════════════════════════════════════════════════════════

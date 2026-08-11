@@ -8,14 +8,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import JSONResponse
 
 from server.deps import get_store
+from server.routes.users import require_host
 from core.llm import chat, _client_for, completion_kwargs
 from core.config import resolve_editor_profile
 from core.store import _parse_doc, slugify
@@ -237,8 +239,8 @@ async def list_arcs():
 
 
 @router.post("/arcs")
-async def create_arc(body: dict[str, Any]):
-    """LLM 辅助新建弧光。"""
+async def create_arc(body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助新建弧光。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -280,8 +282,8 @@ async def get_arc(slug: str):
 
 
 @router.put("/arcs/{slug}")
-async def update_arc(slug: str, body: dict[str, Any]):
-    """LLM 辅助修改弧光。"""
+async def update_arc(slug: str, body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助修改弧光。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -325,8 +327,8 @@ async def list_characters():
 
 
 @router.post("/characters")
-async def create_character(body: dict[str, Any]):
-    """LLM 辅助新建角色（玩家角色或 NPC）。"""
+async def create_character(body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助新建角色（玩家角色或 NPC）。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     char_type = body.get("type", "npc")  # "pc" 或 "npc"
     if not prompt:
@@ -370,8 +372,8 @@ async def list_items():
 
 
 @router.post("/items")
-async def create_item(body: dict[str, Any]):
-    """LLM 辅助新建物品。"""
+async def create_item(body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助新建物品。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -407,8 +409,8 @@ async def list_scenes():
 
 
 @router.post("/scenes")
-async def create_scene(body: dict[str, Any]):
-    """LLM 辅助新建情景。"""
+async def create_scene(body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助新建情景。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -444,8 +446,8 @@ async def list_locations():
 
 
 @router.post("/locations")
-async def create_location(body: dict[str, Any]):
-    """LLM 辅助新建地点。"""
+async def create_location(body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助新建地点。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -479,8 +481,8 @@ async def list_terminology():
 
 
 @router.post("/terminology")
-async def create_terminology(body: dict[str, Any]):
-    """LLM 辅助新建设定术语。"""
+async def create_terminology(body: dict[str, Any], _: None = Depends(require_host)):
+    """LLM 辅助新建设定术语。需主持人/管理员权限。"""
     prompt = body.get("prompt", "").strip()
     if not prompt:
         return JSONResponse({"error": "prompt 不能为空"}, status_code=400)
@@ -528,8 +530,8 @@ def _save_editor_chat(game_root: str | Path, messages: list[dict]):
 
 
 @router.post("/chat")
-async def editor_chat(body: dict[str, Any]):
-    """编辑器 AI 助手对话----多轮，持久化到 .atrpg/editor_chat.json。"""
+async def editor_chat(body: dict[str, Any], _: None = Depends(require_host)):
+    """编辑器 AI 助手对话----多轮，持久化到 .atrpg/editor_chat.json。需主持人/管理员权限。"""
     message = (body.get("message") or "").strip()
     if not message:
         return JSONResponse({"error": "message 不能为空"}, status_code=400)
@@ -660,10 +662,10 @@ MAX_UPLOAD_MB = 50
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), _: None = Depends(require_host)):
     """上传 PDF/DOC 参考材料到 .atrpg/uploads/。
 
-    返回 {ok, filename, size, path}。
+    返回 {ok, filename, size, path}。需主持人/管理员权限。
     """
     if not file.filename:
         return JSONResponse({"error": "文件名为空"}, status_code=400)
@@ -683,9 +685,10 @@ async def upload_file(file: UploadFile = File(...)):
     upload_dir = Path(s.root) / ".atrpg" / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    # 防止文件名冲突：加时间戳前缀
+    # 防止文件名冲突：加时间戳前缀；仅取 basename 并净化，防路径穿越
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    safe_name = f"{ts}_{file.filename}"
+    name_part = re.sub(r"[\\/\x00-\x1f]", "_", Path(file.filename).name) or "upload"
+    safe_name = f"{ts}_{name_part}"
     dest = upload_dir / safe_name
 
     # 分块读取写入，避免超大文件撑爆内存
@@ -758,8 +761,8 @@ async def list_uploads():
 
 
 @router.delete("/uploads/{filename}")
-async def delete_upload(filename: str):
-    """删除 .atrpg/uploads/ 中的指定文件。"""
+async def delete_upload(filename: str, _: None = Depends(require_host)):
+    """删除 .atrpg/uploads/ 中的指定文件。需主持人/管理员权限。"""
     try:
         s = get_store()
     except Exception as e:
@@ -769,8 +772,8 @@ async def delete_upload(filename: str):
     dest = upload_dir / filename
 
     # 防止路径穿越攻击
-    resolved = dest.resolve()
-    if not str(resolved).startswith(str(upload_dir.resolve())):
+    upload_root = upload_dir.resolve()
+    if not dest.resolve().is_relative_to(upload_root):
         return JSONResponse({"error": "非法文件路径"}, status_code=400)
 
     if not dest.exists():

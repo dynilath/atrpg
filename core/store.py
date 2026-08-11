@@ -381,7 +381,18 @@ class Store:
 
     # ---------- 通用读写 ----------
     def _path(self, kind: str, slug: str) -> Path:
-        return self.root / "data" / kind / f"{slug}.md"
+        """构造 data/{kind}/{slug}.md 路径，并校验防路径穿越。"""
+        if not kind or not slug:
+            raise StoreError("kind/slug 不能为空")
+        if any(ord(ch) < 32 or ch in ("/", "\\") for ch in slug):
+            raise StoreError(f"slug 含非法字符: {slug!r}")
+        if slug in (".", ".."):
+            raise StoreError(f"slug 非法: {slug!r}")
+        p = self.root / "data" / kind / f"{slug}.md"
+        base = (self.root / "data" / kind).resolve()
+        if not p.resolve().is_relative_to(base):
+            raise StoreError(f"路径越界: {kind}/{slug}")
+        return p
 
     def read(self, kind: str, slug: str) -> tuple[dict[str, Any], str] | None:
         """读取一篇文档，返回 (meta, body)。不存在返回 None。"""
@@ -402,13 +413,15 @@ class Store:
         return p
 
     def append_body(self, kind: str, slug: str, chunk: str) -> None:
-        """向文档正文末尾追加内容（不改 meta）。文件不存在则创建。"""
+        """向文档正文末尾追加内容（保留 front matter meta）。文件不存在则创建。"""
         p = self._path(kind, slug)
         if p.exists():
             with _FileLock(self.root / ".atrpg" / ".lock"):
-                _, body = _parse_doc(p.read_text(encoding="utf-8"))
+                meta, body = _parse_doc(p.read_text(encoding="utf-8"))
                 body = body.rstrip() + "\n\n" + chunk + "\n"
-                p.write_text(_dump_doc({}, body), encoding="utf-8")
+                meta = {**meta}
+                meta["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+                p.write_text(_dump_doc(meta, body), encoding="utf-8")
         else:
             self.write(kind, slug, {}, chunk)
 

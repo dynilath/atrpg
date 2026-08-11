@@ -5,10 +5,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from server.deps import get_store
+from server.routes.users import require_host
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,13 @@ DATA_KINDS = (
     "characters", "npcs", "locations", "scenes", "items",
     "story-arcs", "state-records", "terminology", "sessions", "players",
 )
+
+
+def _valid_slug(slug: str) -> bool:
+    """slug 合法性：拒绝空值、路径分隔符、控制字符、`.` / `..`。"""
+    if not slug or slug in (".", ".."):
+        return False
+    return not any(ord(ch) < 32 or ch in ("/", "\\") for ch in slug)
 
 
 # --- 世界设定 / 文风（必须在泛化路由之前，否则被 /{kind}/{slug} 拦截）---
@@ -74,6 +82,8 @@ async def list_docs(kind: str):
 async def read_doc(kind: str, slug: str):
     if kind not in DATA_KINDS:
         return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
+    if not _valid_slug(slug):
+        return JSONResponse({"error": f"slug 不合法: {slug!r}"}, status_code=400)
     try:
         s = get_store()
         d = s.read(kind, slug)
@@ -89,9 +99,12 @@ async def read_doc(kind: str, slug: str):
 
 
 @router.post("/{kind}/{slug}")
-async def write_doc(kind: str, slug: str, body: dict[str, Any]):
+async def write_doc(kind: str, slug: str, body: dict[str, Any], _: None = Depends(require_host)):
+    """写入文档。需主持人/管理员权限。"""
     if kind not in DATA_KINDS:
         return JSONResponse({"error": f"未知类别: {kind}"}, status_code=400)
+    if not _valid_slug(slug):
+        return JSONResponse({"error": f"slug 不合法: {slug!r}"}, status_code=400)
     try:
         s = get_store()
         meta = body.get("meta", {})

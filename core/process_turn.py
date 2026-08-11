@@ -325,7 +325,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
     # ── Tool Output Folding: 每轮 LLM 调用前折叠旧的 tool output ──
     _fold_old_tool_outputs(messages, turn_no)
 
-    logger.info(f"准备调用 LLM: model={llm.config().model} messages={len(messages)} tools={len(schemas)}")
+    logger.info(f"准备调用 LLM: model={llm.resolve_profile('chat').model} messages={len(messages)} tools={len(schemas)}")
     for _ in range(MAX_TOOL_ROUNDS):
         try:
             assistant = await llm.chat_with_tools(messages, schemas)

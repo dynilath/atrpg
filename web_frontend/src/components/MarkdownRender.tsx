@@ -102,7 +102,15 @@ function renderLine(line: string, i: number): RenderedItem {
     return { key: i, type: "other", element: <br key={i} /> };
   }
 
-  const html = trimmed
+  // 先转义 HTML，再套用轻量 markdown 语法（防注入：原样替换会导致存储型 XSS）
+  const escaped = trimmed
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+  const html = escaped
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.+?)\*/g, "<em>$1</em>")
     .replace(

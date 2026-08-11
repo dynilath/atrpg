@@ -8,14 +8,25 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from server.deps import get_config as _get_web_config
+from server.routes.users import require_host
 from core import db as _db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/config", tags=["config"])
+
+
+def _mask_key(key: Any) -> str:
+    """脱敏 API Key：仅保留后 4 位，避免泄露明文密钥。"""
+    s = str(key or "")
+    if not s:
+        return ""
+    if len(s) <= 8:
+        return "***"
+    return f"***{s[-4:]}"
 
 # --- QQ Bot QR 流程状态（进程内存） ---
 _qr_state: dict[str, Any] = {"task_id": None, "aes_key": None, "status": "", "app_id": "", "secret": ""}
@@ -76,7 +87,10 @@ def _write_models_data(data: dict[str, Any]) -> None:
 
 @router.get("/models")
 async def get_models():
-    """读取模型库（models.toml [[models]]）。无 models.toml 时回退 config.toml 旧字段。"""
+    """读取模型库（models.toml [[models]]）。无 models.toml 时回退 config.toml 旧字段。
+
+    api_key 脱敏返回（仅保留后 4 位）。
+    """
     try:
         data = _read_models_data()
         models = data.get("models")
@@ -91,21 +105,25 @@ async def get_models():
                 "model": atrpg.get("llm_model", ""),
                 "thinking": False,
             }]
-        return JSONResponse({"models": models})
+        return JSONResponse({"models": [{**m, "api_key": _mask_key(m.get("api_key"))} for m in models]})
     except Exception as e:
         return JSONResponse({"models": [], "error": str(e)}, status_code=500)
 
 
 @router.post("/models")
-async def save_models(body: dict[str, Any]):
+async def save_models(body: dict[str, Any], _: None = Depends(require_host)):
     """全量保存模型库到 models.toml。
 
     body: {"models": [{name, base_url, api_key, model, thinking, temperature?, max_tokens?, reasoning_effort?}]}
     name 必填且唯一；允许空 base_url（模型库可以先建名称再补参数）。
+    需主持人/管理员权限。
     """
     models = body.get("models")
     if not isinstance(models, list):
         return JSONResponse({"error": "models 必须是数组"}, status_code=400)
+
+    # 旧配置（用于保留脱敏 key：前端回传 "***xxxx" 视为"未修改"，沿用旧值）
+    old_models = {str(m.get("name", "")): m for m in (_read_models_data().get("models") or []) if isinstance(m, dict)}
 
     cleaned: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -118,10 +136,14 @@ async def save_models(body: dict[str, Any]):
         if name in seen:
             return JSONResponse({"error": f"模型名称重复: {name}"}, status_code=400)
         seen.add(name)
+        api_key = str(m.get("api_key", "") or "")
+        # 脱敏形态（*** 开头）→ 保留旧 key，避免覆盖真实密钥
+        if api_key.startswith("***"):
+            api_key = str((old_models.get(name) or {}).get("api_key", "") or "")
         entry: dict[str, Any] = {
             "name": name,
             "base_url": str(m.get("base_url", "") or ""),
-            "api_key": str(m.get("api_key", "") or ""),
+            "api_key": api_key,
             "model": str(m.get("model", "") or ""),
             "thinking": bool(m.get("thinking", False)),
         }
@@ -156,7 +178,7 @@ async def save_models(body: dict[str, Any]):
         logger.exception("保存模型库失败")
         return JSONResponse({"error": f"写入失败: {e}"}, status_code=500)
     logger.info(f"保存模型库: {[m['name'] for m in cleaned]}")
-    return JSONResponse({"ok": True, "models": cleaned})
+    return JSONResponse({"ok": True, "models": [{**m, "api_key": _mask_key(m.get("api_key"))} for m in cleaned]})
 
 
 @router.get("/workflows")
@@ -178,11 +200,11 @@ async def get_workflows():
 
 
 @router.post("/workflows")
-async def save_workflows(body: dict[str, Any]):
+async def save_workflows(body: dict[str, Any], _: None = Depends(require_host)):
     """全量保存工作场景映射到 models.toml。
 
     body: {"workflows": {"chat": "模型名", "utility": "模型名", ...}}
-    只允许引用模型库中已存在的名称。
+    只允许引用模型库中已存在的名称。需主持人/管理员权限。
     """
     wf = body.get("workflows")
     if not isinstance(wf, dict):
@@ -243,11 +265,11 @@ async def get_editor_workflows():
 
 
 @router.post("/editor-workflows")
-async def save_editor_workflows(body: dict[str, Any]):
+async def save_editor_workflows(body: dict[str, Any], _: None = Depends(require_host)):
     """全量保存编辑任务模型映射到 models.toml。
 
     body: {"editor_workflows": {"story_arc": "模型名", "character": "", ...}}
-    空字符串 = 回退到 chat workflow。
+    空字符串 = 回退到 chat workflow。需主持人/管理员权限。
     """
     ewf = body.get("editor_workflows")
     if not isinstance(ewf, dict):
@@ -283,7 +305,7 @@ async def save_editor_workflows(body: dict[str, Any]):
 
 @router.get("/ai")
 async def get_ai_config():
-    """读取 AI 配置（兼容旧结构：返回 chat 工作流模型的信息）。"""
+    """读取 AI 配置（兼容旧结构：返回 chat 工作流模型的信息，api_key 脱敏）。"""
     try:
         data = _read_models_data()
         models = data.get("models") or []
@@ -293,15 +315,18 @@ async def get_ai_config():
         return JSONResponse({
             "model": m.get("model", ""),
             "endpoint": m.get("base_url", ""),
-            "api_key": m.get("api_key", ""),
+            "api_key": _mask_key(m.get("api_key", "")),
         })
     except Exception:
         return JSONResponse({"model": "", "endpoint": "", "api_key": ""})
 
 
 @router.post("/ai")
-async def set_ai_config(body: dict[str, str]):
-    """保存 AI 配置（兼容：更新 chat 工作流模型；无模型库时创建 default 模型）。"""
+async def set_ai_config(body: dict[str, str], _: None = Depends(require_host)):
+    """保存 AI 配置（兼容：更新 chat 工作流模型；无模型库时创建 default 模型）。
+
+    需主持人/管理员权限。
+    """
     try:
         data = _read_models_data()
         models = data.get("models") or []
@@ -309,7 +334,9 @@ async def set_ai_config(body: dict[str, str]):
             models = [{"name": "default", "base_url": "", "api_key": "", "model": "", "thinking": False}]
         m = models[0]
         m["base_url"] = body.get("endpoint", m.get("base_url", ""))
-        m["api_key"] = body.get("api_key", m.get("api_key", ""))
+        new_key = str(body.get("api_key", "") or "")
+        # 脱敏形态（*** 开头）→ 保留旧 key
+        m["api_key"] = m.get("api_key", "") if new_key.startswith("***") else new_key
         m["model"] = body.get("model", m.get("model", ""))
         data["models"] = models
         wf = data.get("workflows") or {}
@@ -418,10 +445,11 @@ async def get_context_config_api():
 
 
 @router.post("/context")
-async def save_context_config_api(body: dict[str, Any]):
+async def save_context_config_api(body: dict[str, Any], _: None = Depends(require_host)):
     """保存上下文窗口配置到 config.toml [context] 段。
 
     body: {"window_keep": 20, "window_slide": 5}
+    需主持人/管理员权限。
     """
     from core.config import DEFAULT_CONTEXT_KEEP, DEFAULT_CONTEXT_SLIDE
     try:
@@ -482,8 +510,8 @@ def _qq_api_post(url: str, body: dict) -> dict:
 
 
 @router.post("/qqbot/qr/start")
-async def qqbot_qr_start():
-    """创建 QQ Bot 绑定任务，返回二维码 URL。"""
+async def qqbot_qr_start(_: None = Depends(require_host)):
+    """创建 QQ Bot 绑定任务，返回二维码 URL。需主持人/管理员权限。"""
     global _qr_state
 
     import base64, os

@@ -58,25 +58,36 @@ async def dispatch(store: store_mod.Store, call) -> str:
 
     Args:
         store: Store 实例
-        call: OpenAI tool call 对象（含 name 和 arguments）
+        call: OpenAI tool call（兼容两种形态）：
+            - SDK 对象：call.function.name / call.function.arguments
+            - 字典/普通对象：call.name / call.arguments
 
     Returns:
         工具执行结果字符串（供 LLM 阅读）
     """
-    td = _EDITOR_REGISTRY.get(call.name)
+    if isinstance(call, dict):
+        fn = call.get("function") or {}
+        name = call.get("name") or (fn.get("name") if isinstance(fn, dict) else None)
+        arguments = call.get("arguments") or (fn.get("arguments") if isinstance(fn, dict) else None)
+    else:
+        fn = getattr(call, "function", None)
+        name = getattr(call, "name", None) or getattr(fn, "name", None)
+        arguments = getattr(call, "arguments", None) or getattr(fn, "arguments", None)
+
+    td = _EDITOR_REGISTRY.get(name)
     if td is None:
-        return f"错误：未知编辑器工具 '{call.name}'"
+        return f"错误：未知编辑器工具 '{name}'"
 
     try:
-        args = json.loads(call.arguments) if isinstance(call.arguments, str) else call.arguments
+        args = json.loads(arguments) if isinstance(arguments, str) else (arguments or {})
         return await td.func(store, **args)
     except json.JSONDecodeError:
-        return f"错误：工具 '{call.name}' 的参数不是合法 JSON"
+        return f"错误：工具 '{name}' 的参数不是合法 JSON"
     except TypeError as e:
-        return f"错误：工具 '{call.name}' 参数不匹配：{e}"
+        return f"错误：工具 '{name}' 参数不匹配：{e}"
     except Exception:
-        logger.warning(f"编辑器工具 {call.name} 执行异常", exc_info=True)
-        return f"错误：执行 {call.name} 时发生内部错误"
+        logger.warning(f"编辑器工具 {name} 执行异常", exc_info=True)
+        return f"错误：执行 {name} 时发生内部错误"
 
 
 # ===========================================================================

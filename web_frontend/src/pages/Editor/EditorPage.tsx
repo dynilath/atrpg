@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { Sidebar, SbTabs, SbTab, SbList, Button } from "../../components/ui";
 import EditorAIPanel from "./EditorAIPanel";
 import { BookOpen, Palette } from "lucide-react";
+import { apiGet, apiPost } from "../../api/client";
 
 type ResourceKind = "story-arcs" | "characters" | "npcs" | "items" | "scenes" | "locations" | "terminology";
 
@@ -79,12 +80,7 @@ export default function EditorPage() {
     setSaving(true);
     try {
       const dataKind = DATA_API[activeTab];
-      const r = await fetch(`/api/data/${dataKind}/${selectedSlug}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ meta: editMeta, body: editBody }),
-      });
-      if (!r.ok) throw new Error(await r.text());
+      await apiPost(`/api/data/${dataKind}/${selectedSlug}`, { meta: editMeta, body: editBody });
       setSelectedMeta(editMeta);
       setSelectedBody(editBody);
       setShowEdit(false);
@@ -103,9 +99,7 @@ export default function EditorPage() {
     setSelectedBody("");
     try {
       const apiPath = EDITOR_API[kind];
-      const r = await fetch(`/api/editor/${apiPath}`);
-      if (!r.ok) throw new Error(await r.text());
-      let data = await r.json();
+      let data = await apiGet<any>(`/api/editor/${apiPath}`);
       if (apiPath === "characters" && data.characters) {
         data = kind === "npcs" ? data.npcs || [] : data.characters || [];
       }
@@ -124,9 +118,7 @@ export default function EditorPage() {
     setShowEdit(false);
     try {
       const dataKind = DATA_API[kind];
-      const r = await fetch(`/api/data/${dataKind}/${slug}`);
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
+      const data = await apiGet<any>(`/api/data/${dataKind}/${slug}`);
       setSelectedMeta(data.meta);
       setSelectedBody(data.body || "");
     } catch (e: any) {
@@ -151,9 +143,7 @@ export default function EditorPage() {
     setShowEdit(false);
     setError(null);
     try {
-      const r = await fetch(`/api/data/${kind}/main`);
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
+      const data = await apiGet<any>(`/api/data/${kind}/main`);
       setSelectedMeta(data.meta || {});
       setSelectedBody(data.body || "");
       if (kind === "world-book") setWorldBookBody(data.body || "");
@@ -178,13 +168,7 @@ export default function EditorPage() {
       if (activeTab === "npcs") body.type = "npc";
       else if (activeTab === "characters") body.type = "pc";
 
-      const r = await fetch(`/api/editor/${apiPath}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || await r.text());
+      const data = await apiPost<any>(`/api/editor/${apiPath}`, body);
       setAiResult(`✅ 已创建「${data.title || data.slug}」(${data.slug})`);
       setAiPrompt("");
       // 刷新列表并选中新项
@@ -199,10 +183,10 @@ export default function EditorPage() {
 
   // 首次加载预取文风和世界书摘要
   useEffect(() => {
-    fetch("/api/data/world-book/main")
-      .then(r => r.json()).then(d => setWorldBookBody(d.body || "")).catch(() => {});
-    fetch("/api/data/style-guide/main")
-      .then(r => r.json()).then(d => setStyleGuideBody(d.body || "")).catch(() => {});
+    apiGet<{ body?: string }>("/api/data/world-book/main")
+      .then((d) => setWorldBookBody(d.body || "")).catch(() => {});
+    apiGet<{ body?: string }>("/api/data/style-guide/main")
+      .then((d) => setStyleGuideBody(d.body || "")).catch(() => {});
   }, []);
 
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiGet } from "../../api/client";
+import { apiGet, apiPost } from "../../api/client";
 
 interface ModelProfile {
   name: string;
@@ -87,13 +87,7 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     setSaving(true);
     setError(null);
     try {
-      const r = await fetch("/api/config/context", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ window_keep: ctxKeep, window_slide: ctxSlide }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || await r.text());
+      await apiPost("/api/config/context", { window_keep: ctxKeep, window_slide: ctxSlide });
       setCtxSaved(true);
       setTimeout(() => setCtxSaved(false), 2000);
     } catch (e: any) {
@@ -147,14 +141,8 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     setSaving(true);
     setError(null);
     try {
-      const r = await fetch("/api/config/models", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ models }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || await r.text());
-      setModels(data.models || models);
+      // 注意：服务端返回的 api_key 已脱敏，保存成功后保留本地表单状态（含刚输入的完整 key），不回写
+      await apiPost("/api/config/models", { models });
       setModelsSaved(true);
       setTimeout(() => setModelsSaved(false), 2000);
     } catch (e: any) {
@@ -168,13 +156,7 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     setSaving(true);
     setError(null);
     try {
-      const r = await fetch("/api/config/workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workflows }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || await r.text());
+      const data = await apiPost<{ workflows: Workflows }>("/api/config/workflows", { workflows });
       setWorkflows(data.workflows || workflows);
       setWfSaved(true);
       setTimeout(() => setWfSaved(false), 2000);
@@ -189,13 +171,7 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     setSaving(true);
     setError(null);
     try {
-      const r = await fetch("/api/config/editor-workflows", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ editor_workflows: editorWorkflows }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || await r.text());
+      const data = await apiPost<{ editor_workflows: Workflows }>("/api/config/editor-workflows", { editor_workflows: editorWorkflows });
       setEditorWorkflows(data.editor_workflows || editorWorkflows);
       setEwfSaved(true);
       setTimeout(() => setEwfSaved(false), 2000);
@@ -212,9 +188,7 @@ export default function ConfigPanel({ section }: ConfigPanelProps) {
     setQrError(null);
     setQrStatus("正在生成二维码...");
     try {
-      const r = await fetch("/api/config/qqbot/qr/start", { method: "POST" });
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json();
+      const data = await apiPost<{ qr_url: string }>("/api/config/qqbot/qr/start", {});
       setQrUrl(data.qr_url);
       setQrStatus("请在手机QQ中扫描二维码");
 

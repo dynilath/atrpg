@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { MessageCircle, X, Send, Loader2, Paperclip, FileText, Trash2 } from "lucide-react";
 import MarkdownRender from "../../components/MarkdownRender";
+import { apiGet, apiPost, authHeaders } from "../../api/client";
 
 interface ChatMsg {
   role: "user" | "assistant";
@@ -32,15 +33,13 @@ export default function EditorAIPanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadChat = useCallback(() => {
-    fetch("/api/editor/chat")
-      .then((r) => r.json())
+    apiGet<{ messages: ChatMsg[] }>("/api/editor/chat")
       .then((d) => setMessages(d.messages || []))
       .catch(() => {});
   }, []);
 
   const loadFiles = useCallback(() => {
-    fetch("/api/editor/uploads")
-      .then((r) => r.json())
+    apiGet<{ files: UploadedFile[] }>("/api/editor/uploads")
       .then((d) => setFiles(d.files || []))
       .catch(() => {});
   }, []);
@@ -63,14 +62,10 @@ export default function EditorAIPanel() {
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setLoading(true);
     try {
-      const resp = await fetch("/api/editor/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
-      });
-      const data = await resp.json();
-      if (data.reply) {
-        setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+      const data = await apiPost<{ reply?: string; error?: string }>("/api/editor/chat", { message: text });
+      const reply = data.reply;
+      if (reply) {
+        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
       } else {
         setMessages((prev) => [...prev, { role: "assistant", content: `[错误] ${data.error || "未知错误"}` }]);
       }
@@ -93,7 +88,11 @@ export default function EditorAIPanel() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const resp = await fetch("/api/editor/upload", { method: "POST", body: formData });
+      const resp = await fetch("/api/editor/upload", {
+        method: "POST",
+        headers: { ...authHeaders() },
+        body: formData,
+      });
       const data = await resp.json();
       if (data.ok) {
         loadFiles();
@@ -131,7 +130,10 @@ export default function EditorAIPanel() {
   const handleDeleteFile = useCallback(async (filename: string) => {
     if (!confirm(`确定要删除「${filename}」吗？`)) return;
     try {
-      await fetch(`/api/editor/uploads/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      await fetch(`/api/editor/uploads/${encodeURIComponent(filename)}`, {
+        method: "DELETE",
+        headers: { ...authHeaders() },
+      });
       loadFiles();
     } catch (e: any) {
       alert(`删除失败: ${e.message}`);

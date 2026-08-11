@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button, Input } from "../../components/ui";
 import ChatMessage from "../../components/ui/ChatMessage";
+import { apiPost } from "../../api/client";
 
 interface EditorChatProps {
   kind: string;
@@ -57,12 +58,7 @@ export default function EditorChat({ kind, onCreated }: EditorChatProps) {
       const body: Record<string, string> = { prompt: text };
       if (kind === "characters") body.type = "pc";
       if (kind === "npcs") body.type = "npc";
-      const r = await fetch(`/api/editor/${apiEndpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await r.json();
+      const data = await apiPost<any>(`/api/editor/${apiEndpoint}`, body);
 
       if (data.ok) {
         const slug = data.slug;

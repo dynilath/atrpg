@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, Input } from "../../components/ui";
 import ChatMessage from "../../components/ui/ChatMessage";
+import { apiPost } from "../../api/client";
 
 interface CharacterCreateDialogProps {
   onCreated: (slug: string) => void;
@@ -29,12 +30,7 @@ export default function CharacterCreateDialog({ onCreated, onClose }: CharacterC
     setLoading(true);
 
     try {
-      const r = await fetch("/api/editor/characters", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text, type: "pc" }),
-      });
-      const data = await r.json();
+      const data = await apiPost<any>("/api/editor/characters", { prompt: text, type: "pc" });
 
       if (data.ok) {
         setResult({ slug: data.slug, name: data.title || data.slug, body: data.body || "" });

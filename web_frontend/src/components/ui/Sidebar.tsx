@@ -4,11 +4,14 @@ type SidebarSide = "left" | "right";
 
 interface SidebarProps extends HTMLAttributes<HTMLElement> {
   side?: SidebarSide;
+  /** 宽度类，默认 w-80 min-w-80；调用方可覆盖（如控制台图形画布需要更宽） */
+  widthClass?: string;
   children: ReactNode;
 }
 
 export default function Sidebar({
   side = "right",
+  widthClass = "w-80 min-w-80",
   children,
   className = "",
   ...rest
@@ -16,7 +19,7 @@ export default function Sidebar({
   const borderCls = side === "left" ? "border-l" : "border-r";
   return (
     <aside
-      className={`w-80 min-w-80 bg-surface-container-low flex flex-col ${borderCls} border-border ${className}`.trim()}
+      className={`${widthClass} bg-surface-container-low flex flex-col ${borderCls} border-border ${className}`.trim()}
       data-sidebar={side}
       {...rest}
     >

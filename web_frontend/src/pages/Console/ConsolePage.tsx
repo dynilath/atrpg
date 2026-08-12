@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "../../api/client";
-import { Sidebar, SbSection } from "../../components/ui";
-import TurnListPanel from "./TurnListPanel";
+import { Sidebar } from "../../components/ui";
+import TurnGraphPanel from "./TurnGraphPanel";
 import TurnDetailPanel from "./TurnDetailPanel";
 import ConfigPanel from "./ConfigPanel";
 
@@ -63,13 +63,6 @@ export default function ConsolePage() {
     }
   };
 
-  const scrollSidebarToBottom = () => {
-    requestAnimationFrame(() => {
-      const el = document.querySelector('[data-sidebar="left"]');
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-  };
-
   useEffect(() => {
     refreshTurns();
     apiGet<{ head_node_id: string | null }>("/api/sessions/branch/active")
@@ -88,7 +81,6 @@ export default function ConsolePage() {
         if (msg.type === "new_turn") {
           refreshTurns();
           setCurrentId(msg.payload.id);
-          scrollSidebarToBottom();
         }
       } catch {}
     };
@@ -98,8 +90,8 @@ export default function ConsolePage() {
 
   return (
     <div className="flex h-[calc(100vh-52px)] overflow-hidden">
-      {/* 左侧：主标签 + 会话列表 */}
-      <Sidebar side="left" className="overflow-y-auto">
+      {/* 左侧：主标签 + 会话树形图 */}
+      <Sidebar side="left" widthClass="w-[460px] min-w-[460px]">
         {/* 主标签 */}
         <div className="border-b border-border">
           {MAIN_TABS.map((t) => (
@@ -120,9 +112,9 @@ export default function ConsolePage() {
           ))}
         </div>
 
-        {/* 只有在轮次详情时才显示会话列表 */}
+        {/* 只有在轮次详情时才显示会话树形图 */}
         {mainTab === "sessions" && (
-          <SbSection>
+          <div className="flex flex-col flex-1 min-h-0 px-4 pt-4 pb-3">
             <button
               onClick={handleReset}
               disabled={resetting}
@@ -133,14 +125,14 @@ export default function ConsolePage() {
             <div className="text-caption font-semibold text-muted-foreground uppercase tracking-[0.08em] mb-2">
               会话轮次
             </div>
-            <TurnListPanel
+            <TurnGraphPanel
               turns={turns}
               selectedId={selectedId}
               onSelect={setSelectedId}
               error={error}
               currentId={currentId}
             />
-          </SbSection>
+          </div>
         )}
       </Sidebar>
 

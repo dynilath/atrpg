@@ -137,7 +137,10 @@ def _setup_static_files(app: FastAPI) -> None:
 
 def main():
     """独立启动入口。"""
+    import sys
     import tomllib
+    from pathlib import Path
+
     cfg = get_config()
     config_path = Path(__file__).resolve().parent.parent / "config.toml"
     sc = {}

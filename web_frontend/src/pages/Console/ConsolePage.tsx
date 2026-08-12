@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "../../api/client";
 import { Sidebar, SbSection } from "../../components/ui";
-import Button from "../../components/ui/Button";
 import TurnListPanel from "./TurnListPanel";
 import TurnDetailPanel from "./TurnDetailPanel";
 import ConfigPanel from "./ConfigPanel";
@@ -124,13 +123,15 @@ export default function ConsolePage() {
         {/* 只有在轮次详情时才显示会话列表 */}
         {mainTab === "sessions" && (
           <SbSection>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-caption font-semibold text-muted-foreground uppercase tracking-[0.08em]">
-                会话轮次
-              </div>
-              <Button variant="danger" size="sm" onClick={handleReset} disabled={resetting}>
-                {resetting ? "处理中..." : "重新开局"}
-              </Button>
+            <button
+              onClick={handleReset}
+              disabled={resetting}
+              className="w-full mb-3 px-3 py-1.5 rounded-lg text-base font-semibold transition-colors bg-error text-white hover:brightness-[.92] disabled:opacity-45 disabled:cursor-not-allowed"
+            >
+              {resetting ? "处理中..." : "重新开局"}
+            </button>
+            <div className="text-caption font-semibold text-muted-foreground uppercase tracking-[0.08em] mb-2">
+              会话轮次
             </div>
             <TurnListPanel
               turns={turns}

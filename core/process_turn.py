@@ -49,9 +49,44 @@ class ToolContext:
     group_id: str
     raw_text: str
     send_fn: Callable[[str], Awaitable[None]] | None = None
+    outbox: str = ""  # 待发送文档（内存）：LLM 经 outbox_append/outbox_rewrite 写入，turn 结束清理阶段统一发送
     replied: bool = False
     reply_preview: str = ""
     last_usage: dict[str, int] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# 待发送文档（outbox）与轮次号
+# ---------------------------------------------------------------------------
+
+def _compute_turn_no(s: store.Store) -> int:
+    """计算下一轮次号：tree_nodes 表 MAX(turn_no) + 1。"""
+    from .db import _session_db
+    import sqlite3 as _sqlite3
+
+    _sdb = _session_db(s.root)
+    if _sdb.exists():
+        try:
+            with _sqlite3.connect(str(_sdb)) as _conn:
+                _row = _conn.execute("SELECT MAX(turn_no) FROM tree_nodes").fetchone()
+            return (_row[0] or 0) + 1
+        except Exception:
+            return 1
+    return 1
+
+
+def _dump_outbox(ctx: ToolContext, s: store.Store, turn_no: int) -> None:
+    """turn 出问题时把待发送文档落盘（.atrpg/outbox/turn_<no>.md），防止草稿丢失。"""
+    if not ctx.outbox.strip():
+        return
+    try:
+        out_dir = s.root / ".atrpg" / "outbox"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        p = out_dir / f"turn_{turn_no:05d}.md"
+        p.write_text(ctx.outbox.strip(), encoding="utf-8")
+        logger.warning(f"待发送文档已落盘（turn 异常）: {p} ({len(ctx.outbox)}字)")
+    except Exception:
+        logger.exception("待发送文档落盘失败")
 
 
 # ===========================================================================
@@ -250,8 +285,31 @@ async def process_turn(input: TurnInput) -> TurnResult:
       1. 加载历史
       2. 构造 system 前缀 + 发送人框架
       3. 工具调用循环（最多 MAX_TOOL_ROUNDS 轮）
-      4. 保存历史快照
-      5. 返回处理结果
+      4. 清理阶段：发送待发送文档（outbox）
+      5. 保存历史快照
+      6. 返回处理结果
+
+    turn 中出问题（未捕获异常）时，若 outbox 已有内容则落盘 .atrpg/outbox/ 防止草稿丢失。
+    """
+    ctx = ToolContext(
+        store=input.store,
+        member_openid=input.member_openid,
+        group_id=input.group_id,
+        raw_text=input.text,
+        send_fn=input.send_fn,
+    )
+    try:
+        return await _process_turn_impl(input, ctx)
+    except BaseException:
+        # turn 中出问题：待发送文档草稿落盘防止丢失，再抛给调用方（QQ/WS/GM）
+        _dump_outbox(ctx, input.store, _compute_turn_no(input.store))
+        raise
+
+
+async def _process_turn_impl(input: TurnInput, ctx: ToolContext) -> TurnResult:
+    """process_turn 的主体实现。
+
+    ctx 携带本轮可变状态（含 outbox 草稿）；未捕获异常由 process_turn 外层落盘。
     """
     # 延迟导入 --- dispatch/tool_schemas 在 tools.py 中定义，依赖其 @tool 装饰器
     # 注册的工具表。process_turn 本身不直接引用 NoneBot 类型。
@@ -270,19 +328,7 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
     # ── 计算当前轮次号（用于 Tool Output Folding 标记）──
     # 消息粒度化存储后，轮次号取自 tree_nodes 表
-    from .db import _session_db
-    import sqlite3 as _sqlite3
-
-    _sdb = _session_db(s.root)
-    if _sdb.exists():
-        try:
-            with _sqlite3.connect(str(_sdb)) as _conn:
-                _row = _conn.execute("SELECT MAX(turn_no) FROM tree_nodes").fetchone()
-            turn_no = (_row[0] or 0) + 1
-        except Exception:
-            turn_no = 1
-    else:
-        turn_no = 1
+    turn_no = _compute_turn_no(s)
 
     # ── 构造 system 前缀（每轮刷新，世界书可能更新）──
     system_prefix = _load_system_prefix(s, input.mode)
@@ -293,13 +339,13 @@ async def process_turn(input: TurnInput) -> TurnResult:
 
     # ── 构造本轮 messages ──
     history_body = [m for m in history if m.get("role") != "system"]
-    reply_hint = "\n\n（处理完后必须调用 reply 工具发送回复。）"
+    reply_hint = "\n\n（处理完后必须调用 outbox_append 工具，把要发给玩家的内容写入待发送文档，turn 结束时自动发送。）"
     if history_body:
         messages = [{"role": "system", "content": system_prefix}] + history_body + [{"role": "user", "content": turn_user + reply_hint}]
     else:
         reply_hint = (
             "\n\n（首次对话。如需了解当前情景/在场者/已有弧光，"
-            "用 query_character_scene / query_memory 工具查询。处理完后**必须调用 reply 工具发送回复**。）"
+            "用 query_character_scene / query_memory 工具查询。处理完后**必须调用 outbox_append 工具**把回复写入待发送文档，turn 结束时自动发送。）"
         )
         messages = [
             {"role": "system", "content": system_prefix},
@@ -309,16 +355,9 @@ async def process_turn(input: TurnInput) -> TurnResult:
     # ── 记录本轮 user 消息在 messages 中的位置（用于提取增量）──
     turn_user_idx = len(messages) - 1  # turn_user 总是在 messages 末尾
 
-    # ── 工具上下文 ──
-    ctx = ToolContext(
-        store=s,
-        member_openid=input.member_openid,
-        group_id=input.group_id,
-        raw_text=input.text,
-        send_fn=input.send_fn,
-    )
+    # 工具上下文（含 outbox 待发送文档）由 process_turn 外层创建
 
-    # ── 工具调用循环（流式：reply 工具被调用时立即发送）──
+    # ── 工具调用循环（内容写入 outbox，清理阶段统一发送）──
     schemas = tool_schemas()
     llm_call_count = 0
 
@@ -331,8 +370,11 @@ async def process_turn(input: TurnInput) -> TurnResult:
             assistant = await llm.chat_with_tools(messages, schemas)
         except Exception as e:
             logger.exception("LLM 调用失败")
-            if not ctx.replied:
+            if not ctx.outbox.strip():
                 result.error = "LLM 调用失败"
+            else:
+                # 文档已有内容：落盘备份，清理阶段仍会发送
+                _dump_outbox(ctx, s, turn_no)
             break
 
         llm_call_count += 1
@@ -356,15 +398,15 @@ async def process_turn(input: TurnInput) -> TurnResult:
         messages.append(llm.assistant_to_message(assistant))
 
         if not assistant.has_tool_calls:
-            if not ctx.replied:
-                # 模型停止但没调 reply → 不丢弃，留给后续重试机制
+            if not ctx.outbox.strip():
+                # 模型停止但文档为空 → 不丢弃 content，留给后续重试机制
                 if assistant.content.strip():
                     logger.warning(
-                        f"LLM 未调 reply 即停止，content 待重试 "
+                        f"LLM 未写文档即停止，content 待重试 "
                         f"({len(assistant.content)}chars): {assistant.content[:80]!r}"
                     )
             elif assistant.content.strip():
-                logger.warning(f"LLM reply 后又生成残留文本，已丢弃：{assistant.content[:80]!r}")
+                logger.warning(f"LLM 写文档后又生成残留文本，已丢弃：{assistant.content[:80]!r}")
             break
 
         # 执行工具调用
@@ -373,21 +415,25 @@ async def process_turn(input: TurnInput) -> TurnResult:
             messages.append(llm.tool_result_message(call.id, tool_result, turn_no=turn_no))
     else:
         # 触达 MAX_TOOL_ROUNDS 仍未收尾
-        if not ctx.replied:
+        if not ctx.outbox.strip():
             result.error = "工具调用循环达到上限，强制收尾"
+        else:
+            _dump_outbox(ctx, s, turn_no)
         logger.warning("工具调用循环达到上限，强制收尾")
 
-    # ── 重试：若本轮从未调 reply，注入提示让 AI 补刀 ──
-    if not ctx.replied:
-        retry_prompt = "请调用 reply 工具发送故事内容。"
+    # ── 重试：若文档仍为空，注入提示让 AI 补刀 ──
+    if not ctx.outbox.strip():
+        retry_prompt = "请调用 outbox_append 工具，把要发给玩家的故事内容写入待发送文档。"
         messages.append({"role": "user", "content": retry_prompt})
-        logger.info(f"注入 reply 重试提示，messages={len(messages)}")
+        logger.info(f"注入 outbox 重试提示，messages={len(messages)}")
 
         for _ in range(2):  # 重试最多 2 轮
             try:
                 assistant = await llm.chat_with_tools(messages, schemas)
             except Exception:
                 logger.exception("重试轮 LLM 调用失败")
+                if ctx.outbox.strip():
+                    _dump_outbox(ctx, s, turn_no)
                 break
 
             llm_call_count += 1
@@ -407,18 +453,30 @@ async def process_turn(input: TurnInput) -> TurnResult:
                 tool_result = await dispatch(ctx, call)
                 messages.append(llm.tool_result_message(call.id, tool_result, turn_no=turn_no))
 
-            if ctx.replied:
-                logger.info("重试成功：reply 已被调用")
+            if ctx.outbox.strip():
+                logger.info("重试成功：outbox 已被写入")
                 break
         else:
             logger.warning("重试轮达到上限")
 
-        # 重试后仍未调 reply → 发送固定提示
-        if not ctx.replied and ctx.send_fn:
-            await ctx.send_fn("（AI 未生成回复，请重试）")
-            ctx.replied = True
-            ctx.reply_preview = "（AI 未生成回复，请重试）"
-            logger.warning("重试后 LLM 仍拒绝调 reply，已发送固定提示")
+    # ── 清理阶段：发送待发送文档（原 reply 即时发送改为统一发送）──
+    if ctx.outbox.strip():
+        outbox_text = ctx.outbox.strip()
+        if ctx.send_fn:
+            for chunk in _split_chunks([outbox_text]):
+                await ctx.send_fn(chunk)
+        ctx.replied = True
+        ctx.reply_preview = outbox_text[:120]
+    elif ctx.send_fn:
+        # 兜底：文档为空 → 发送固定提示
+        await ctx.send_fn("（AI 未生成回复，请重试）")
+        ctx.replied = True
+        ctx.reply_preview = "（AI 未生成回复，请重试）"
+        logger.warning("turn 结束待发送文档仍为空，已发送固定提示")
+
+    # 防御：出错路径（LLM 异常/循环上限）若文档有内容，此处兜底落盘
+    if result.error and ctx.outbox.strip():
+        _dump_outbox(ctx, s, turn_no)
 
     # ── 计算本轮增量消息用于快照（不含 system 前缀）──
     stored_messages = messages[1:]  # 剥离 system，只存对话部分

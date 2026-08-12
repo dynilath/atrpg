@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Awaitable, Callable
 
 from . import arc, llm, store
-from .process_turn import ToolContext, _split_chunks
+from .process_turn import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -65,31 +65,49 @@ async def dispatch(ctx: ToolContext, call: llm.ToolCall) -> str:
 # 工具实现
 # ===========================================================================
 
-# --- 回复工具 ---------------------------------------------------------------
+# --- 待发送文档（outbox）工具 -------------------------------------------------
 
 @tool(
-    "reply",
-    "【必须调用】向玩家发送消息，是唯一出口——不调 reply 玩家什么也看不到。"
+    "outbox_append",
+    "【必须调用】把要发给玩家的内容**追加**到待发送文档（outbox）末尾。"
+    "这是玩家看到内容的唯一出口——turn 结束时文档内容会统一自动发送，不调它玩家什么也看不到。"
     "内容可包含演绎文本、NPC 台词、裁决结果、情景描写。"
     "所有要给玩家看的文本必须放在 content 参数里，不要写在 assistant 消息正文然后传空参数。"
-    "长篇幅叙事可分多次 reply；每次应自成一体。",
+    "长篇幅叙事可分多次 outbox_append；每次应自成一体。"
+    "如需修改已写内容（更正、调整顺序），用 outbox_rewrite 整体重写。",
     {
         "type": "object",
         "properties": {
-            "content": {"type": "string", "description": "要发给玩家的完整文本（演绎/NPC台词/裁决），必填，不能为空"},
+            "content": {"type": "string", "description": "要追加到待发送文档的文本（演绎/NPC台词/裁决），必填，不能为空"},
         },
         "required": ["content"],
     },
 )
-async def reply(ctx: ToolContext, content: str) -> str:
+async def outbox_append(ctx: ToolContext, content: str) -> str:
     if not content or not content.strip():
-        return "错误：reply 的 content 不能为空。把要发给玩家的文本放进 content 参数。"
-    if ctx.send_fn:
-        for chunk in _split_chunks([content]):
-            await ctx.send_fn(chunk)
-    ctx.replied = True
-    ctx.reply_preview = content[:120]
-    return f"已发送（{len(content)}字）"
+        return "错误：outbox_append 的 content 不能为空。把要发给玩家的文本放进 content 参数。"
+    ctx.outbox = (ctx.outbox + "\n" + content).strip()
+    return f"已写入待发送文档（追加 {len(content)} 字，当前共 {len(ctx.outbox)} 字）"
+
+
+@tool(
+    "outbox_rewrite",
+    "【可选】整体重写待发送文档（outbox）的内容。"
+    "用于修改本轮已写的内容（更正、调整、精简）；重写后文档仅保留本参数内容。"
+    "文档会在 turn 结束时统一自动发送给玩家。",
+    {
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": "重写后的完整文档文本，必填，不能为空"},
+        },
+        "required": ["content"],
+    },
+)
+async def outbox_rewrite(ctx: ToolContext, content: str) -> str:
+    if not content or not content.strip():
+        return "错误：outbox_rewrite 的 content 不能为空。把重写后的完整文本放进 content 参数。"
+    ctx.outbox = content.strip()
+    return f"已重写待发送文档（当前共 {len(ctx.outbox)} 字）"
 
 
 # --- 角色与情景工具 ---------------------------------------------------------
@@ -656,7 +674,8 @@ def _extract_recent_events(body: str, max_events: int = 3) -> list[str]:
     "roll_dice",
     "掷骰子工具。接受 dicelet 骰子表达式（如 2d6+3、4d6k3、d20+5、3#6d6），返回掷骰结果。"
     "用于 TRPG 中的随机裁决：属性检定、技能判定、战斗伤害、随机事件、运气判定等。"
-    "你应在裁决玩家行动需要随机性时调用此工具，不要自己编造掷骰结果。",
+    "你应在裁决玩家行动需要随机性时调用此工具，不要自己编造掷骰结果。"
+    "掷骰日志会自动追加到待发送文档，玩家可见具体骰值，无需再手动把数值写进 outbox_append。",
     {
         "type": "object",
         "properties": {
@@ -685,9 +704,12 @@ async def roll_dice(ctx: ToolContext, expression: str) -> str:
 
     try:
         result = dicelet.roll(expression)
-        return result.full
     except Exception as e:
         return f"掷骰错误：{e}"
+
+    # 掷骰日志自动追加到待发送文档，随 turn 结束统一发送给玩家
+    ctx.outbox = (ctx.outbox + f"\n🎲 掷骰 {expression} → {result.full}").strip()
+    return result.full
 
 
 # ===========================================================================

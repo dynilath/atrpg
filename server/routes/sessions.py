@@ -61,6 +61,26 @@ async def turn_detail(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@router.post("/reset")
+async def reset_session(
+    body: dict,
+    x_provider: str = Header("", alias="X-Provider"),
+    x_user_id: str = Header("", alias="X-User-Id"),
+):
+    """重新开局：抛弃旧主持人上下文，创建空会话分支并切换。 body: {name?}"""
+    err = _check(x_provider, x_user_id)
+    if err:
+        return err
+    try:
+        root = Path(get_config().game_dir)
+        name = body.get("name", "").strip() or None
+        branch_id = _db.session_reset(root, name)
+        return JSONResponse({"ok": True, "branch_id": branch_id})
+    except Exception as e:
+        logger.exception("reset session 失败")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @router.post("/branch")
 async def create_branch(
     body: dict,

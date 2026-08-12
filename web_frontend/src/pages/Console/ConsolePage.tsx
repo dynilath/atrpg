@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { apiGet } from "../../api/client";
+import { apiGet, apiPost } from "../../api/client";
 import { Sidebar, SbSection } from "../../components/ui";
+import Button from "../../components/ui/Button";
 import TurnListPanel from "./TurnListPanel";
 import TurnDetailPanel from "./TurnDetailPanel";
 import ConfigPanel from "./ConfigPanel";
@@ -34,10 +35,33 @@ export default function ConsolePage() {
   const [error, setError] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<MainTab>("sessions");
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const [resetting, setResetting] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const refreshTurns = () => {
     apiGet<TurnSummary[]>("/api/sessions").then(setTurns).catch(() => {});
+  };
+
+  const refreshActiveBranch = () => {
+    apiGet<{ head_node_id: string | null }>("/api/sessions/branch/active")
+      .then((d) => setCurrentId(d.head_node_id))
+      .catch(() => {});
+  };
+
+  const handleReset = async () => {
+    if (resetting) return;
+    if (!window.confirm("重新开局将抛弃当前主持人上下文并开始新会话，旧轮次记录仍保留可回看。确定继续？")) return;
+    setResetting(true);
+    try {
+      await apiPost("/api/sessions/reset", {});
+      setSelectedId(null);
+      refreshTurns();
+      refreshActiveBranch();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setResetting(false);
+    }
   };
 
   const scrollSidebarToBottom = () => {
@@ -99,7 +123,15 @@ export default function ConsolePage() {
 
         {/* 只有在轮次详情时才显示会话列表 */}
         {mainTab === "sessions" && (
-          <SbSection title="会话轮次">
+          <SbSection>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-caption font-semibold text-muted-foreground uppercase tracking-[0.08em]">
+                会话轮次
+              </div>
+              <Button variant="danger" size="sm" onClick={handleReset} disabled={resetting}>
+                {resetting ? "处理中..." : "重新开局"}
+              </Button>
+            </div>
             <TurnListPanel
               turns={turns}
               selectedId={selectedId}
@@ -117,9 +149,7 @@ export default function ConsolePage() {
           selectedId ? (
             <TurnDetailPanel turnId={selectedId} turns={turns} isCurrent={selectedId === currentId} onBranchCreated={() => {
               refreshTurns();
-              apiGet<{ head_node_id: string | null }>("/api/sessions/branch/active")
-                .then((d) => setCurrentId(d.head_node_id))
-                .catch(() => {});
+              refreshActiveBranch();
             }} />
           ) : (
             <p className="text-muted-foreground text-center pt-10">

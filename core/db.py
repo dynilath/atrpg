@@ -392,6 +392,27 @@ def session_switch_branch(root: Path, branch_id: str) -> bool:
         return True
 
 
+def session_reset(root: Path, name: str | None = None) -> str:
+    """重新开局：创建 head 为空的新分支并切换为活跃分支。
+
+    新分支 head_id 为空 → walk_branch_to_root 返回 [] → build_context 得到空上下文，
+    即抛弃旧主持人上下文、开始全新会话；旧轮次仍保留在树中可供回看。
+    """
+    db = _session_db(root)
+    with sqlite3.connect(str(db)) as conn:
+        _ensure_active(root, conn)  # 确保 active_branch 表存在
+        branch_id = uuid.uuid4().hex[:8]
+        branch_name = name or "重新开局"
+        conn.execute(
+            "INSERT INTO branches (id, name, head_id, created_at) VALUES (?,?,?,?)",
+            (branch_id, branch_name, "", datetime.now(timezone.utc).isoformat()),
+        )
+        conn.execute("UPDATE active_branch SET branch_id = ? WHERE id = 1", (branch_id,))
+        conn.commit()
+        logger.info(f"session reset: new branch {branch_name} ({branch_id})")
+        return branch_id
+
+
 def session_create_branch(root: Path, from_node_id: str, name: str | None = None) -> str | None:
     """从指定节点创建新分支（回滚点），返回新分支 id。
 

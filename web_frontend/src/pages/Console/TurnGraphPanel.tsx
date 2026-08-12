@@ -346,10 +346,12 @@ export default function TurnGraphPanel({ turns, selectedId, onSelect, error, cur
     });
   }, [visible.length, currentId, fit]);
 
-  // 容器尺寸变化（未手动调整视图、且已聚焦完成后）重新适配
+  // 容器尺寸变化（窗口缩放/最大化/恢复）：保持世界坐标中心与缩放比例不变，
+  // 仅平移补偿使原视图内容仍居中，不重置用户的视图状态
   useEffect(() => {
     const el = containerRef.current;
-    if (!el) return;
+    // 注意：turns 未到达时容器未渲染（el 为 null），依赖 visible.length 使容器就绪后注册
+    if (!el || visible.length === 0) return;
     let prev: { w: number; h: number } | null = null;
     const ro = new ResizeObserver((entries) => {
       const entry = entries[0];
@@ -360,12 +362,18 @@ export default function TurnGraphPanel({ turns, selectedId, onSelect, error, cur
         prev = { w: width, h: height };
         return;
       }
+      const oldW = prev.w;
+      const oldH = prev.h;
       prev = { w: width, h: height };
-      if (focusedRef.current && !userAdjustedRef.current) fit();
+      setView((v) => {
+        const worldX = (oldW / 2 - v.x) / v.scale;
+        const worldY = (oldH / 2 - v.y) / v.scale;
+        return { ...v, x: width / 2 - worldX * v.scale, y: height / 2 - worldY * v.scale };
+      });
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fit]);
+  }, [visible.length]);
 
   // 当前节点（新轮次到达/切换分支）移出视野时平移到可见，保持用户缩放比例
   useEffect(() => {
